@@ -7,12 +7,13 @@ import java.util.Arrays;
 
 public class BlockSink {
 
-    ByteBuffer buf = ByteBuffer.allocateDirect(1024 * 1024);
+    ByteBuffer buf = ByteBuffer.allocate(1024 * 1024);
+//    ByteBuffer buf = ByteBuffer.allocateDirect(1024 * 1024);
     long nStatus = 0;
-    long nExtent = 0;
+   public long nExtent = 0;
     long nLeft = 0;
     long nWasted = 0;
-    int blockSize = 2048;
+   public int blockSize = 2048;
     OutputStream out = null;
 
     public BlockSink() {
@@ -82,7 +83,6 @@ public class BlockSink {
     }
 
     public void reset() {
-        this.nStatus = 0;
         this.nExtent = 0;
         this.nLeft = 0;
         this.nWasted = 0;

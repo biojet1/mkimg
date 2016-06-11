@@ -2,10 +2,23 @@ package udf;
 
 import java.nio.ByteBuffer;
 import java.time.OffsetDateTime;
+import java.util.Arrays;
 
 public class UDFWrite {
 
-    public static void descriptorTag(ByteBuffer b, short tid, long lba, int len) {
+    /* ECMA-167 4/14.6.6 */
+    static final byte UDF_ICBTAG_FILETYPE_DIRECTORY = 4;
+    static final byte UDF_ICBTAG_FILETYPE_BYTESEQ = 5;
+    static final byte UDF_ICBTAG_FLAG_ARCHIVE = 32;
+    /* TR/71 3.5.4 */
+    static final short UDF_FILEENTRY_PERMISSION_OX = 1;
+    static final short UDF_FILEENTRY_PERMISSION_OR = 4;
+    static final short UDF_FILEENTRY_PERMISSION_GX = 32;
+    static final short UDF_FILEENTRY_PERMISSION_GR = 128;
+    static final short UDF_FILEENTRY_PERMISSION_UX = 1024;
+    static final short UDF_FILEENTRY_PERMISSION_UR = 4096;
+
+    public static ByteBuffer descriptorTag(ByteBuffer b, short tid, long lba, int len) {
         // Uint16 TagIdentifier;
         b.putShort(0, tid);
         b.putShort(2, (short) 2); //  Uint16 DescriptorVersion;
@@ -24,6 +37,8 @@ public class UDFWrite {
             chksum += buf[i] & 255;
         }
         buf[4] = (byte) chksum;
+        System.err.printf("Descriptor %d @%d #%d\n", tid, lba, len);
+        return b;
     }
     final static byte[] OCU = new byte[]{'O', 'S', 'T', 'A', ' ', 'C', 'o', 'm', 'p', 'r', 'e', 's', 's', 'e', 'd', ' ', 'U', 'n', 'i', 'c', 'o', 'd', 'e'};
 
@@ -45,16 +60,16 @@ public class UDFWrite {
         j = 0;
         b.mark();
         b.put((byte) 8);
-        while ((i < n) && (j < l)) {
+        while ((i++ < n) && (j < l)) {
             char c = s.charAt(j++);
             if (c > 255) {
                 i = 0;
                 j = 0;
                 b.reset();
                 b.put((byte) 16);
-                while ((i < n) && (j < l)) {
+                while ((i++ < n) && (j < l)) {
                     b.put((byte) ((s.charAt(j++) & 65280) >> 8));
-                    if (i < n) {
+                    if (i++ < n) {
                         b.put((byte) ((s.charAt(j++) & 255)));
                     }
                 }
@@ -89,11 +104,11 @@ public class UDFWrite {
     }
 
     public static void entityId(ByteBuffer b, String id) {
-        putEntityId(b, id.getBytes(), new byte[]{});
+        putEntityId(b, 0, id.getBytes(), new byte[]{});
     }
 
-    public static void putEntityId(ByteBuffer b, byte[] id, byte[] suffix) {
-        b.put((byte) 0);
+    public static void putEntityId(ByteBuffer b, int flag, byte[] id, byte[] suffix) {
+        b.put((byte) flag);
         int n = id.length;
         if (n < 23) {
             if (n > 0) {
@@ -118,4 +133,10 @@ public class UDFWrite {
         }
     }
 
+    public static void zfill(ByteBuffer b, int len) {
+        final int p = b.position();
+        final int n = p + len;
+        Arrays.fill(b.array(), p, n, (byte) 0);
+        b.position(n);
+    }
 }

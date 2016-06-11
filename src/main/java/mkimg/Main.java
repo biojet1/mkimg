@@ -8,7 +8,7 @@ public class Main {
 
     public static void main(String[] args) throws IOException {
         FileSystem fs = new FileSystem();
-
+        String out = null;
         Iterator<String> argv = Arrays.stream(args).iterator();
         for (int dash = 0; argv.hasNext();) {
             String arg = argv.next();
@@ -18,28 +18,29 @@ public class Main {
                 dash = 2;
             } else if ("--logs".equals(arg)) {
 
+            } else if (("--output".equals(arg) || "-o".equals(arg)) && argv.hasNext()) {
+                arg = argv.next();
+                out = arg;
             } else if ("--find".equals(arg) && argv.hasNext()) {
                 arg = argv.next();
-
-            } else if (("--output".equals(arg) || "-o".equals(arg)) && argv.hasNext()) {
-                arg = argv.next();
             } else if (("--config".equals(arg) || "-p".equals(arg)) && argv.hasNext()) {
-                arg = argv.next();
-            } else if (("--output".equals(arg) || "-o".equals(arg)) && argv.hasNext()) {
                 arg = argv.next();
             } else if (("--include".equals(arg) || "-I".equals(arg)) && argv.hasNext()) {
                 arg = argv.next();
             } else if (("--cache-inodes".equals(arg) || "-h".equals(arg)) && argv.hasNext()) {
-                arg = argv.next();
+                fs.cacheInodes = true;
             } else if (("--link-duplicates".equals(arg) || "-H".equals(arg)) && argv.hasNext()) {
-                arg = argv.next();
-            } else if (("--follow-links".equals(arg) || "-f".equals(arg)) && argv.hasNext()) {
-                arg = argv.next();
+                fs.linkDuplicates = true;
+            } else if (("--follow-links".equals(arg) || "-f".equals(arg))) {
+                fs.followLinks = true;
             } else {
                 throw new RuntimeException("Unexpected argument : \"" + arg + "\"");
             }
         }
-        fs.root.writeTree(System.out, 0);
+        fs.getRoot().writeTree(System.out, 0);
+        UDFBuild udf = new UDFBuild();
+        BlockSink sink = new BlockSink();
+        udf.build(sink, fs.getRoot());
     }
 }
 /*
