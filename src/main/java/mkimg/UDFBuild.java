@@ -310,7 +310,7 @@ public class UDFBuild {
     }
 
     void tryPush(LinkedList<DataDesc> descs, Node node, boolean isEntry) {
-        INodeEntry ino = (INodeEntry) node.getData();
+        Inode ino = (Inode) node.getData();
         if (isEntry) {
             if ((ino.flag & 0x1) != 0) {
                 return;
@@ -333,7 +333,7 @@ public class UDFBuild {
             tryPush(descs, child, false); // put children's data
         }
         for (Node child : parent) {
-            if (((INodeEntry) child.getData()).isDirectory()) {
+            if (((Inode) child.getData()).isDirectory()) {
                 build(descs, child);
             }
         }
@@ -351,10 +351,10 @@ public class UDFBuild {
 
     void write(BlockSink out, DataDesc dd) throws IOException {
         Node nod = dd.node;
-        INodeEntry ino = (INodeEntry) nod.getData();
+        Inode ino = (Inode) nod.getData();
         if (dd.isEntry()) {
             if (ino.isDirectory()) {
-                if (nod.isRoot()) {
+                if (nod.getParent() == null) {
                     if (out.nStatus != 0) {
                         this.lbaRootDirectoryStart = out.nExtent;
                     } else {
@@ -377,7 +377,7 @@ public class UDFBuild {
         }
     }
 
-    void build(BlockSink out, TreeEntry root) throws IOException {
+    void build(BlockSink out, TreeNode root) throws IOException {
         LinkedList<DataDesc> descs = new LinkedList<>();
 
 // prep vars

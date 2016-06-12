@@ -17,6 +17,12 @@ public class UDFWrite {
     static final short UDF_FILEENTRY_PERMISSION_GR = 128;
     static final short UDF_FILEENTRY_PERMISSION_UX = 1024;
     static final short UDF_FILEENTRY_PERMISSION_UR = 4096;
+    /* ECMA-167 4/14.4.3 */
+    static final byte UDF_FILE_CHARACTERISTIC_HIDDEN = 1;
+    static final byte UDF_FILE_CHARACTERISTIC_DIRECTORY = 2;
+    static final byte UDF_FILE_CHARACTERISTIC_DELETED = 4;
+    static final byte UDF_FILE_CHARACTERISTIC_PARENT = 8;
+//
 
     public static ByteBuffer descriptorTag(ByteBuffer b, short tid, long lba, int len) {
         // Uint16 TagIdentifier;

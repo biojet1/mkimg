@@ -21,7 +21,7 @@ import java.util.Iterator;
 public class FileSystem {
     // sources tree   
 
-    private TreeEntry root = null;
+    private TreeNode root = null;
     boolean cacheInodes = false;
     boolean followLinks = false;
     boolean linkDuplicates = false;
@@ -40,21 +40,21 @@ public class FileSystem {
     int verbosity = 2;
     int setArchived = 2;
     int fsLayout = 3;
-    LinkedHashMap<Object, INodeEntry> inoCache = new LinkedHashMap<>();
-    
+    LinkedHashMap<Object, Inode> inoCache = new LinkedHashMap<>();
+
     void addPath(String target) throws IOException {
         addPath(getRoot(), target);
     }
-    
-    synchronized TreeEntry getRoot() {
+
+    synchronized TreeNode getRoot() {
         if (root == null) {
-            root = new TreeEntry("", null);
-            root.setData(new INodeEntry(true));
+            root = new TreeNode.Directory("", null);
+            root.setData(new Inode(true));
         }
         return root;
     }
-    
-    void addPath(TreeEntry parent, String target) throws IOException {
+
+    void addPath(TreeNode parent, String target) throws IOException {
         Path path = Paths.get(target);
         String name = path.getFileName().toString();
         BasicFileAttributes a = Files.getFileAttributeView(path, BasicFileAttributeView.class).readAttributes();
@@ -65,44 +65,45 @@ public class FileSystem {
             child.setData(path.toAbsolutePath().toString());
         }
     }
-    
-    Node addPath(TreeEntry parent, Path path) throws IOException {
+
+    TreeNode addPath(TreeNode parent, Path path) throws IOException {
         String name = path.getFileName().toString();
         if (Files.isDirectory(path)) {
             Node child = parent.internTree(name);
             child.setData(fetch(path));
-            return child;
+            return (TreeNode) child;
         } else {
             Node child = parent.internFile(name);
             child.setData(fetch(path));
-            return child;
+            return (TreeNode) child;
         }
     }
-    
-    void walk(TreeEntry parent, Path dir) throws IOException {
+
+    void walk(TreeNode parent, Path dir) throws IOException {
         Iterator<Path> it = Files.list(dir).iterator();
         while (it.hasNext()) {
             Path path = it.next();
             Node child = addPath(parent, path);
-            if (!child.isLeaf()) {
-                walk((TreeEntry) child, path);
+            Object data = child.getData();
+            if (data != null && ((Inode) data).isDirectory()) {
+                walk((TreeNode) child, path);
             }
         }
     }
-    
-    INodeEntry fetch(Path path) throws IOException {
+
+    Inode fetch(Path path) throws IOException {
         if (inoCache != null) {
             BasicFileAttributes a = Files.getFileAttributeView(path, BasicFileAttributeView.class).readAttributes();
             Object id = a.fileKey();
-            INodeEntry ino = inoCache.get(id);
+            Inode ino = inoCache.get(id);
             if (ino == null) {
-                ino = INodeFile.fromFile(path);
+                ino = Inode.fromFile(path);
                 inoCache.put(id, ino);
             }
             return ino;
         } else {
-            return INodeFile.fromFile(path);
+            return Inode.fromFile(path);
         }
     }
-    
+
 }
