@@ -6,13 +6,13 @@ import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 
-public class TreeNode implements Node {
+public class TreeNode implements Node<Inode> {
 
     static char SEPARATOR = '/';
     String name;
     String path;
     Node parent;
-    Object data;
+    Inode data;
 
     @Override
     public String getName() {
@@ -30,12 +30,12 @@ public class TreeNode implements Node {
     }
 
     @Override
-    public Object getData() {
+    public Inode getData() {
         return data;
     }
 
     @Override
-    public void setData(Object data) {
+    public void setData(Inode data) {
         this.data = data;
     }
 
@@ -101,7 +101,7 @@ public class TreeNode implements Node {
 
     static public class Directory extends TreeNode {
 
-        private final List<Node> children;
+        private final List<Node<Inode>> children;
 
         public Directory(String name, TreeNode parent) {
             this.name = name;
@@ -115,12 +115,12 @@ public class TreeNode implements Node {
         }
 
         @Override
-        public List<Node> getChildren() {
+        public List<Node<Inode>> getChildren() {
             return children;
         }
 
         @Override
-        public Iterator<Node> iterator() {
+        public Iterator<Node<Inode>> iterator() {
             return this.children.iterator();
         }
     }

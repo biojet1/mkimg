@@ -1,8 +1,11 @@
 package udf;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.ByteBuffer;
+import java.security.MessageDigest;
 import java.time.OffsetDateTime;
+import java.util.Arrays;
 import mkimg.BlockSink;
 import mkimg.Inode;
 import mkimg.Node;
@@ -74,7 +77,7 @@ public class UDFWriteFile {
         //Uint32 Checkpoint; Monotonic increasing numeric tag.
         b.putInt(1);
         //struct long_ad ExtendedAttributeICB;
-        b.putLong(0).putLong(0).putLong(0).putLong(0);
+        b.putInt(0).putInt(0).putInt(0).putInt(0);
         //struct EntityID ImplementationIdentifier;
         assert (imId.length == 32);
         b.put(imId);
@@ -97,7 +100,7 @@ public class UDFWriteFile {
         // NOTE: UDF DVD Video Compat: files to be less than or equal to 2**30 - 1 Sector (0x40000000-0x800 = 0x3ffff800) bytes in length.
         // TODO: 0x3ffff800 is for 2048 bytes block
         // Write
-        out.writePadded(UDFWrite.descriptorTag(b, (short) 261, rbaEntry, b.position()).array(), 0, b.position());
+        out.writep(UDFWrite.descriptorTag(b, (short) 261, rbaEntry, b.position()).array(), 0, b.position());
     }
 
     public static int fileItem(final BlockSink out, final Inode ino, String name, long rbaEntry, long rbaData) throws IOException {
@@ -153,25 +156,88 @@ public class UDFWriteFile {
         }
         // Write
         int length = b.position();
-        out.writePadded(UDFWrite.descriptorTag(b, (short) 257, rbaEntry, length).array(), 0, length);
+        out.writep(UDFWrite.descriptorTag(b, (short) 257, rbaEntry, length).array(), 0, length);
         assert (length > 38);
         assert (length <= out.blockSize);
         return length;
     }
 
-    public static void fileData(final BlockSink out, final Node cur, final Inode ino, long lbaUDFPartitionStart) throws IOException {
-        if (ino.isDirectory()) {
-            long lbaBase = out.nExtent;
-            long rbaBase = lbaBase - lbaUDFPartitionStart;
-            long _size = 0;
-            Node parent = cur.getParent();
-            if (parent == null) {// root
-                parent = cur;
+
+
+    public static void fileData(final BlockSink out, final Inode ino, byte[] buf, final long size, MessageDigest md, boolean interActive) throws IOException {
+        InputStream in;
+        if (interActive) {
+            RETRY:
+            for (;;) {
+                try {
+                    in = ino.getInputStream();
+                } catch (IOException ex) {
+                    System.err.println(ex.getMessage());
+                    for (;;) {
+                        System.err.println("[A]bort [R]etry:");
+                        switch (System.in.read()) {
+                            case 'A':
+                            case 'a':
+                            case -1:
+                                ex.printStackTrace(System.err);
+                                System.exit(1);
+                                return;
+                            case 'R':
+                            case 'r':
+                                continue RETRY;
+                        }
+                    }
+                }
+                break;
             }
-            _size += fileItem(out, (Inode) parent.getData(), null, rbaBase, ino.aux1 - lbaUDFPartitionStart);
-            for (Node child : cur) {
-                Inode cIno = (Inode) child.getData();
-                _size += fileItem(out, (Inode) child.getData(), child.getName(), rbaBase + (_size / out.blockSize), cIno.aux1 - lbaUDFPartitionStart);
+        } else {
+            in = ino.getInputStream();
+        }
+        // Read/Write
+        int nSize;
+        long nRemain = size;
+        while (nRemain > 0) {
+            nSize = in.read(buf);
+            // Cut ?
+            if (nRemain < nSize) {
+                nSize = (int) nRemain;
+            }
+            // Write
+            out.write(buf, 0, nSize);
+            nRemain -= nSize;
+            // Calc MD
+            if (md != null) {
+                md.update(buf, 0, nSize);
+            }
+        }
+        // Pad?
+        if (nRemain != 0) {
+            assert (nRemain > 0);
+        }
+        // Pad to block
+        out.writep();
+        // Check MD:
+        MD:
+        if (md != null) {
+            byte[] d = md.digest();
+            if (ino.hash == null) {
+                ino.hash = d;
+            } else if (!Arrays.equals(d, ino.hash)) {
+                System.err.println("Digest mismatched!");
+                while (interActive) {
+                    System.err.println("[A]bort [C]ontinue:");
+                    switch (System.in.read()) {
+                        case 'A':
+                        case 'a':
+                        case -1:
+                            System.exit(1);
+                            return;
+                        case 'C':
+                        case 'c':
+                            ino.hash = d;
+                            break MD;
+                    }
+                }
             }
         }
     }

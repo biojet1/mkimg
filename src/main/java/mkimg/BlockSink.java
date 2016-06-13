@@ -9,11 +9,11 @@ public class BlockSink {
 
     ByteBuffer buf = ByteBuffer.allocate(1024 * 1024);
 //    ByteBuffer buf = ByteBuffer.allocateDirect(1024 * 1024);
-    long nStatus = 0;
-   public long nExtent = 0;
+    public long nStatus = 0;
+    public long nExtent = 0;
     long nLeft = 0;
     long nWasted = 0;
-   public int blockSize = 2048;
+    public int blockSize = 2048;
     OutputStream out = null;
 
     public BlockSink() {
@@ -25,7 +25,7 @@ public class BlockSink {
         return buf;
     }
 
-    public void writeBlocks(byte[] b, int off, int len) throws IOException {
+    public void write(byte[] b, int off, int len) throws IOException {
         if (out != null) {
             out.write(b, off, len);
         }
@@ -34,7 +34,7 @@ public class BlockSink {
         this.nLeft = (x % this.blockSize);
     }
 
-    public void writePadded(byte[] b, int off, int len) throws IOException {
+    public void writep(byte[] b, int off, int len) throws IOException {
         if (len > 0) {
             assert (this.nLeft == 0);
             if (out != null) {
@@ -43,11 +43,15 @@ public class BlockSink {
             this.nExtent += (len / this.blockSize);
             this.nLeft = (len % this.blockSize);
         }
+        writep();
+    }
+
+    public void writep() throws IOException {
         if (this.nLeft > 0) {
             byte[] bf = new byte[this.blockSize - (int) this.nLeft];
             Arrays.fill(bf, (byte) 0);
             if (out != null) {
-                out.write(b);
+                out.write(bf);
             }
             this.nWasted += this.nLeft;
             this.nExtent++;
@@ -61,7 +65,7 @@ public class BlockSink {
         byte[] b = new byte[this.blockSize];
         Arrays.fill(b, (byte) 0);
         while (n-- > 0) {
-            this.writeBlocks(b, 0, b.length);
+            this.write(b, 0, b.length);
             this.nWasted += this.blockSize;
         }
     }
@@ -72,7 +76,7 @@ public class BlockSink {
         byte[] b = new byte[this.blockSize];
         Arrays.fill(b, (byte) 0);
         while (this.nExtent < lba) {
-            this.writeBlocks(b, 0, b.length);
+            this.write(b, 0, b.length);
             this.nWasted += this.blockSize;
         }
     }

@@ -5,7 +5,10 @@
  */
 package mkimg;
 
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributeView;
@@ -18,7 +21,7 @@ import java.nio.file.attribute.PosixFilePermission;
  *
  * @author U-1
  */
-public class Inode {
+public abstract class Inode {
 // permission
 
     static final short S_IRWXU = 00700;
@@ -43,7 +46,7 @@ public class Inode {
 // extra
     static final int X_HIDDEN = 1 << 16;
     static final int X_IGNORE = 1 << 17;
-//
+// Attributes
     public long size = Long.MIN_VALUE;
     public long mtime = Long.MIN_VALUE;
     public long ctime = Long.MIN_VALUE;
@@ -51,15 +54,13 @@ public class Inode {
     public int mode = 0;
     public int uid = 0;
     public int gid = 0;
-//
+// Build Attributes
     public int sort = 0;
     public int nlink = 0;
-// buid flag
     int flag = 0;
-//
-    public long aux1 = Long.MIN_VALUE;
-    public long aux2 = Long.MIN_VALUE;
-// 
+    public long aux1 = 0;
+    public long aux2 = 0;
+    public byte[] hash = null;
 
     public Inode(int mode) {
         this.mode = mode;
@@ -82,28 +83,31 @@ public class Inode {
         return (X_HIDDEN & mode) == X_HIDDEN;
     }
 
+    abstract public InputStream getInputStream() throws IOException;
+
     static Inode fromFile(Path path) throws IOException {
         Inode ino;
         BasicFileAttributes a = Files.getFileAttributeView(path, BasicFileAttributeView.class).readAttributes();
-
+//        System.err.print(path);
+//        System.err.print(' ');
         if (a.isDirectory()) {
-            ino = new Inode(0);
+//            System.err.println("DIR");
+            ino = new File(S_IFDIR, path.toString());
             if (Files.isSymbolicLink(path)) {
                 Path target = Files.readSymbolicLink(path);
-                ino.mode = S_IFDIR | S_IFLNK;
+                ino.mode |= S_IFLNK;
                 ino.size = target.toString().getBytes("UTF-8").length;
             } else {
-                ino.mode = S_IFDIR;
                 ino.size = a.size();
             }
         } else {
-            ino = new Inode(0);
+//            System.err.println("REG");
+            ino = new File(S_IFREG, path.toString());
             if (Files.isSymbolicLink(path)) {
                 Path target = Files.readSymbolicLink(path);
-                ino.mode = S_IFREG | S_IFLNK;
+                ino.mode |= S_IFLNK;
                 ino.size = target.toString().getBytes("UTF-8").length;
             } else {
-                ino.mode = S_IFREG;
                 ino.size = a.size();
             }
         }
@@ -150,5 +154,30 @@ public class Inode {
             }
         }
         return ino;
+    }
+
+    static public class File extends Inode {
+
+        public String path;
+
+        public File(int mode, String path) {
+            super(mode);
+            this.path = path;
+        }
+
+        public File(boolean mode, String path) {
+            super(mode);
+            this.path = path;
+        }
+
+        public File(boolean mode) {
+            super(mode);
+        }
+
+        @Override
+        public InputStream getInputStream() throws FileNotFoundException {
+            return new FileInputStream(path);
+        }
+
     }
 }

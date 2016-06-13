@@ -43,7 +43,7 @@ public class UDFWrite {
             chksum += buf[i] & 255;
         }
         buf[4] = (byte) chksum;
-        System.err.printf("Descriptor %d @%d #%d\n", tid, lba, len);
+//        System.err.printf("Descriptor %d @%d #%d\n", tid, lba, len);
         return b;
     }
     final static byte[] OCU = new byte[]{'O', 'S', 'T', 'A', ' ', 'C', 'o', 'm', 'p', 'r', 'e', 's', 's', 'e', 'd', ' ', 'U', 'n', 'i', 'c', 'o', 'd', 'e'};

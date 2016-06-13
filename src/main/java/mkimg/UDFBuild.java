@@ -2,13 +2,17 @@ package mkimg;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.time.OffsetDateTime;
 import java.util.Arrays;
+import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.Random;
 import udf.DataDesc;
 import udf.UDFWrite;
 import udf.UDFWriteFile;
+import static udf.UDFWriteFile.fileData;
+import static udf.UDFWriteFile.fileItem;
 
 public class UDFBuild {
 
@@ -24,7 +28,7 @@ public class UDFBuild {
     private String volumeSetIdentifier;
     private String fileSetIdentifier;
     private long lbaMainVolumeDesc;
-    private int lbaUDFPartitionStart;
+    private long lbaUDFPartitionStart;
     byte[] ENTITYID_OSTA_COMPLIANT = new byte[]{'\00', '*', 'O', 'S', 'T', 'A', ' ', 'U', 'D', 'F', ' ', 'C', 'o', 'm', 'p', 'l', 'i', 'a', 'n', 't', '\00', '\00', '\00', '\00', '\02', '\01', '\03', '\00', '\00', '\00', '\00', '\00'};
     private long lbaReserveVolumeDesc;
     private long totalSectors;
@@ -44,7 +48,7 @@ public class UDFBuild {
             b.put((byte) 0);// StructureType
             b.put(vrid[i]);//StandardIdentifier
             b.put((byte) 1);// StructureVersion
-            out.writeBlocks(b.array(), 0, 2048);
+            out.write(b.array(), 0, 2048);
         }
         assert (((32768 / out.blockSize) + ((3 * 2048) / out.blockSize)) == out.nExtent);
     }
@@ -52,7 +56,7 @@ public class UDFBuild {
     static void terminatingDescriptor(BlockSink out) throws IOException {
         ByteBuffer b = out.getBuffer();
         UDFWrite.zfill(b, 512);
-        out.writePadded(UDFWrite.descriptorTag(b, (short) 8, out.nExtent, 512).array(), 0, b.position());
+        out.writep(UDFWrite.descriptorTag(b, (short) 8, out.nExtent, 512).array(), 0, b.position());
     }
 
     static void systemArea(BlockSink out) throws IOException {
@@ -101,7 +105,7 @@ public class UDFBuild {
             b.putShort((short) 0x102); // Uint16 MaximumUDFWriteRevision;
         }
         // Write
-        out.writePadded(UDFWrite.descriptorTag(b, (short) 9, out.nExtent, 134).array(), 0, b.position());
+        out.writep(UDFWrite.descriptorTag(b, (short) 9, out.nExtent, b.position()).array(), 0, b.position());
         assert (134 == b.position());
     }
 
@@ -174,7 +178,7 @@ public class UDFBuild {
             //byte Reserved[22];
             UDFWrite.zfill(b, 22);
             // Write
-            out.writePadded(UDFWrite.descriptorTag(b, (short) 1, out.nExtent, b.position()).array(), 0, b.position());
+            out.writep(UDFWrite.descriptorTag(b, (short) 1, out.nExtent, b.position()).array(), 0, b.position());
             assert (512 == b.position());
         }
         //struct ImpUseVolumeDescriptor 
@@ -199,7 +203,7 @@ public class UDFBuild {
                 UDFWrite.zfill(b, 128);
             }
             // Write
-            out.writePadded(UDFWrite.descriptorTag(b, (short) 4, out.nExtent, 512).array(), 0, b.position());
+            out.writep(UDFWrite.descriptorTag(b, (short) 4, out.nExtent, b.position()).array(), 0, b.position());
             assert (512 == b.position());
         }
         //   struct PartitionDescriptor 
@@ -219,7 +223,7 @@ public class UDFBuild {
             // Uint32 AccessType;
             b.putInt(1);
             // Uint32 PartitionStartingLocation;
-            b.putInt(this.lbaUDFPartitionStart);
+            b.putInt((int) this.lbaUDFPartitionStart);
             // Uint32 PartitionLength;
             b.putInt((int) this.partionSize);
             // struct EntityID ImplementationIdentifier;
@@ -229,7 +233,7 @@ public class UDFBuild {
             // byte Reserved[156];
             UDFWrite.zfill(b, 156);
             // Write
-            out.writePadded(UDFWrite.descriptorTag(b, (short) 5, out.nExtent, 512).array(), 0, b.position());
+            out.writep(UDFWrite.descriptorTag(b, (short) 5, out.nExtent, b.position()).array(), 0, b.position());
             assert (512 == b.position());
         }
         // struct LogicalVolumeDescriptor 
@@ -274,7 +278,7 @@ public class UDFBuild {
 
             }
             // Write
-            out.writePadded(UDFWrite.descriptorTag(b, (short) 6, out.nExtent, b.position()).array(), 0, b.position());
+            out.writep(UDFWrite.descriptorTag(b, (short) 6, out.nExtent, b.position()).array(), 0, b.position());
             assert (446 == b.position());
         }
         // struct UnallocatedSpaceDesc  // ISO 13346 3/10.8 
@@ -286,7 +290,7 @@ public class UDFBuild {
             // Uint32 NumberofAllocationDescriptors;
             b.putInt(0);
             // Write
-            out.writePadded(UDFWrite.descriptorTag(b, (short) 7, out.nExtent, 24).array(), 0, b.position());
+            out.writep(UDFWrite.descriptorTag(b, (short) 7, out.nExtent, b.position()).array(), 0, b.position());
             assert (24 == b.position());
         }
         UDFBuild.terminatingDescriptor(out);
@@ -297,7 +301,7 @@ public class UDFBuild {
         // struct AnchorVolumeDescriptorPointer  // ISO 13346 3/10.2
         ByteBuffer b = out.getBuffer();
         // struct tag DescriptorTag;
-        b.position(16);
+        b.limit(512).position(16);
         // struct extent_ad MainVolumeDescriptorSequenceExtent;
         b.putInt(out.blockSize * 16).putInt((int) this.lbaMainVolumeDesc);
         // struct extent_ad ReserveVolumeDescriptorSequenceExtent;
@@ -305,12 +309,59 @@ public class UDFBuild {
         // byte Reserved[480];
         UDFWrite.zfill(b, 480);
         // Write
-        out.writePadded(UDFWrite.descriptorTag(b, (short) 2, out.nExtent, 512).array(), 0, b.position());
+        out.writep(UDFWrite.descriptorTag(b, (short) 2, out.nExtent, b.position()).array(), 0, b.position());
         assert (512 == b.position());
     }
 
-    void tryPush(LinkedList<DataDesc> descs, Node node, boolean isEntry) {
-        Inode ino = (Inode) node.getData();
+    void filesetDescriptor(BlockSink out) throws IOException {
+//struct FileSetDescriptor { /* ISO 13346 4/14.1 */
+        ByteBuffer b = out.getBuffer();
+//        struct tag DescriptorTag;
+        b.limit(512).position(16);
+//        struct timestamp RecordingDateandTime;
+        UDFWrite.putTimestamp(b, recordingDateandTime);
+//        Uint16 InterchangeLevel;
+        b.putShort((short) 3);
+//        Uint16 MaximumInterchangeLevel;
+        b.putShort((short) 3);
+//        Uint32 CharacterSetList;
+        b.putInt(1);
+//        Uint32 MaximumCharacterSetList;
+        b.putInt(1);
+//        Uint32 FileSetNumber;
+        b.putInt(0);
+//        Uint32 FileSetDescriptorNumber;
+        b.putInt(0);
+//        struct charspec LogicalVolumeIdentifierCharacterSet;
+        UDFWrite.putCharSpecOSTACompressedUnicode(b);
+//        dstring LogicalVolumeIdentifier[128];
+        UDFWrite.putDString(b, logicalVolumeIdentifier, 128);
+//        struct charspec FileSetCharacterSet;
+        UDFWrite.putCharSpecOSTACompressedUnicode(b);
+//        dstring FileSetIdentifer[32];
+        UDFWrite.putDString(b, fileSetIdentifier, 32);
+//        dstring CopyrightFileIdentifier[32];
+        UDFWrite.putDString(b, "copyright", 32);
+//        dstring AbstractFileIdentifier[32];
+        UDFWrite.putDString(b, "abstract", 32);
+//        struct long_ad RootDirectoryICB;
+        b.putInt(out.blockSize);
+        b.putInt((int) (this.lbaRootDirectoryStart - this.lbaUDFPartitionStart)).putShort((short) 0);
+        b.putShort((short) 0).putInt(0);
+//        struct EntityID DomainIdentifier;
+        b.put(ENTITYID_OSTA_COMPLIANT);
+//        struct long_ad NextExtent;
+        b.putInt(0).putInt(0).putInt(0).putInt(0);
+//        byte Reserved[48];
+        UDFWrite.zfill(b, 48);
+//};
+        // Write
+        out.writep(UDFWrite.descriptorTag(b, (short) 256, out.nExtent, b.position()).array(), 0, b.position());
+        assert (512 == b.position());
+    }
+
+    void tryPush(LinkedList<DataDesc> descs, Node<Inode> node, boolean isEntry) {
+        Inode ino = node.getData();
         if (isEntry) {
             if ((ino.flag & 0x1) != 0) {
                 return;
@@ -325,33 +376,33 @@ public class UDFBuild {
         descs.add(new DataDesc(node, descs.size(), isEntry));
     }
 
-    void build(LinkedList<DataDesc> descs, Node parent) {
-        for (Node child : parent) {
+    void build(LinkedList<DataDesc> descs, Node<Inode> parent) {
+        for (Node<Inode> child : parent) {
             tryPush(descs, child, true); // put children's inode
         }
-        for (Node child : parent) {
+        for (Node<Inode> child : parent) {
             tryPush(descs, child, false); // put children's data
         }
-        for (Node child : parent) {
-            if (((Inode) child.getData()).isDirectory()) {
+        for (Node<Inode> child : parent) {
+            if (child.getData().isDirectory()) {
                 build(descs, child);
             }
         }
     }
 
-    void supply(Node node) {
-        Object payload = node.getData();
+    void supply(Node<Inode> node) {
+        Inode payload = node.getData();
         if (payload == null) {
 
         }
-        for (Node child : node) {
+        for (Node<Inode> child : node) {
             supply(child);
         }
     }
 
     void write(BlockSink out, DataDesc dd) throws IOException {
-        Node nod = dd.node;
-        Inode ino = (Inode) nod.getData();
+        Node<Inode> nod = dd.node;
+        Inode ino = nod.getData();
         if (dd.isEntry()) {
             if (ino.isDirectory()) {
                 if (nod.getParent() == null) {
@@ -364,22 +415,78 @@ public class UDFBuild {
             }
             if (out.nStatus != 0) {
                 ino.aux1 = out.nExtent++; // 1 block 
-//                assert (ino.nlink > 0);
+                assert (ino.nlink > 0);
             } else {
                 assert (ino.aux1 == out.nExtent);
                 assert (ino.aux2 < this.totalSectors);
-//                assert ((ino.aux1 == 0) || (ino.aux2 > this.lbaUDFPartitionStart));
+                assert ((ino.aux1 == 0) || (ino.aux2 > this.lbaUDFPartitionStart));
                 UDFWriteFile.fileEntry(out, ino, dd.seq, this.applicationIdentifier, ino.aux1, ino.aux2);
             }
-
         } else {
-
+            fileData(out, nod);
         }
     }
 
-    void build(BlockSink out, TreeNode root) throws IOException {
-        LinkedList<DataDesc> descs = new LinkedList<>();
+    public void fileData(final BlockSink out, final Node<Inode> cur) throws IOException {
+        final Inode ino = cur.getData();
+        if (ino.isDirectory()) {
+            long lbaBase = out.nExtent;
+            long rbaBase = lbaBase - lbaUDFPartitionStart;
+            long _size = 0;
+            Node<Inode> parent = cur.getParent();
+            if (parent == null) {// root
+                parent = cur;
+            }
+            _size += fileItem(out, parent.getData(), null, rbaBase, ino.aux1 - lbaUDFPartitionStart);
+            for (Node<Inode> child : cur) {
+                Inode cIno = child.getData();
+                _size += fileItem(out, child.getData(), child.getName(), rbaBase + (_size / out.blockSize), cIno.aux1 - lbaUDFPartitionStart);
+                if (out.nStatus != 0) {
+                    if (!cIno.isDirectory()) {
+                        this.nFiles++;
+                    }
+                }
+            }
+            out.writep();
+            if (out.nStatus != 0) {
+                this.nDirectories++;
+                assert (rbaBase > 0);
+                assert (_size > 0);
+                assert (0 == ino.aux2);
+                ino.aux2 = lbaBase;
+                ino.size = _size;
+            } else {
+                assert (ino.aux2 > this.lbaUDFPartitionStart);
+                assert (ino.aux2 < this.totalSectors);
+                assert (ino.aux2 == lbaBase);
+                assert (_size == ino.size);
+                assert (ino.size >= 0);
+                assert (ino.size < (this.partionSize * out.blockSize));
+            }
+        } else {
+            UDFWriteFile.fileData(out, ino, out.getBuffer().array(), ino.size, null, false);
+        }
+    }
 
+    void partitionStart(BlockSink out) throws IOException {
+        if (out.nStatus != 0) {
+            this.lbaUDFPartitionStart = out.nExtent;
+        } else {
+            assert (this.lbaUDFPartitionStart == out.nExtent);
+        }
+        filesetDescriptor(out);
+        UDFBuild.terminatingDescriptor(out);
+    }
+
+    void build(BlockSink out, TreeNode root) throws IOException {
+        out.getBuffer().order(ByteOrder.LITTLE_ENDIAN);
+        Iterator<Node<Inode>> w = root.depthFirstIterator();
+        while (w.hasNext()) {
+            Node<Inode> cur = w.next();
+            Inode ino = cur.getData();
+            ino.nlink++;
+            System.err.println(cur.getName());
+        }
 // prep vars
         {
             OffsetDateTime now = OffsetDateTime.now();
@@ -418,19 +525,21 @@ public class UDFBuild {
                 fileSetIdentifier = String.format("FSI%X", now.toEpochSecond());
             }
             // Set ApplicationIdentifier
+            String appId = "mkimg-1.0";
             if (applicationIdentifier == null) {
                 ByteBuffer b = ByteBuffer.allocate(32);
-                UDFWrite.entityId(b, setPrefix);
+                UDFWrite.entityId(b, appId);
                 applicationIdentifier = b.array();
             }
 
             System.err.printf("%24s: %s\n", "LogicalVolumeIdentifier", logicalVolumeIdentifier);
             System.err.printf("%24s: %s\n", "VolumeSetIdentifier", volumeSetIdentifier);
             System.err.printf("%24s: %s\n", "FileSetIdentifier", fileSetIdentifier);
-            System.err.printf("%24s: %s\n", "ApplicationIdentifier", applicationIdentifier);
+            System.err.printf("%24s: %s\n", "ApplicationIdentifier", appId);
             System.err.printf("%24s: %s\n", "RecordTime", recordingDateandTime);
         }
 // prep tree
+        LinkedList<DataDesc> descs = new LinkedList<>();
         {
 
             tryPush(descs, root, true);
@@ -439,6 +548,7 @@ public class UDFBuild {
         }
 // build image
         out.nStatus = 1;
+        long volumeSize = 0;
         do {
             if (out.nStatus != 0) {
                 System.err.println("Calculating ...");
@@ -451,38 +561,58 @@ public class UDFBuild {
             }
             UDFBuild.systemArea(out);
             UDFBuild.volumeRecognitionArea(out);
-            UDFBuild.terminatingDescriptor(out);
+//            UDFBuild.terminatingDescriptor(out);
             logicalVolumeIntegrityDesc(out);
+            PARTITION:
             {
-                out.padUpTo(256 - 16);
-                volumeDescriptorSequence(out);
-                out.padUpTo(256);
-                anchorVolumeDescriptorPointer(out);
-            }
-            {
-                for (DataDesc desc : descs) {
-                    write(out, desc);
+                /////
+                {
+                    out.padUpTo(256 - 16);
+                    volumeDescriptorSequence(out);
+                    out.padUpTo(256);
+                    anchorVolumeDescriptorPointer(out);
                 }
-            }
-
-            {
-                assert (out.nExtent > this.lbaUDFPartitionStart);
-                if (out.nStatus != 0) {
-                    this.partionSize = out.nExtent - this.lbaUDFPartitionStart;
-                } else {
-                    assert ((out.nExtent - this.lbaUDFPartitionStart) == this.partionSize);
+                partitionStart(out);
+                {
+                    for (DataDesc desc : descs) {
+                        write(out, desc);
+                    }
+                }
+                PARTITION_END:
+                {
+                    assert (out.nExtent > this.lbaUDFPartitionStart);
+                    if (out.nStatus != 0) {
+                        this.partionSize = out.nExtent - this.lbaUDFPartitionStart;
+                    } else {
+                        assert ((out.nExtent - this.lbaUDFPartitionStart) == this.partionSize);
+                    }
                 }
             }
             volumeDescriptorSequence(out);
             anchorVolumeDescriptorPointer(out);
             this.totalSectors = out.nExtent;
-            if (out.nStatus != 0) {
-//		udf.nLastUniqueID = 16 + descs.size();
+
+            if (out.nStatus == 0) {
+                System.err.println("Writing completed\n");
+                assert ((out.nExtent * out.blockSize) == volumeSize);
+                assert ((16 + descs.size()) == this.nLastUniqueID);
             } else {
-//		assert((16 + descs.size()) == udf.nLastUniqueID);
+                this.nLastUniqueID = 16 + descs.size();
+                volumeSize = out.nExtent * out.blockSize;
                 assert (out.nExtent <= 2147483647);
                 assert (out.nExtent > (256 + 1));
+                System.err.printf("%20s: %s\n", "MainVolumeDescLBA", lbaMainVolumeDesc);
+                System.err.printf("%20s: %s\n", "ReserveVolumeDescLBA", lbaReserveVolumeDesc);
+                System.err.printf("%20s: %s\n", "IntegritySequenceLBA", lbaIntegritySequence);
+                System.err.printf("%20s: %s\n", "PartitionStartLBA", lbaUDFPartitionStart);
+                System.err.printf("%20s: %s\n", "RootDirectoryLBA", lbaRootDirectoryStart);
+                System.err.printf("%20s: %s\n", "PartionSize", partionSize);
+                System.err.printf("%20s: %s\n", "BlockSize", out.blockSize);
+//                System.err.printf("%20s: %s\n", "PartionSize", partionSize);
+                System.err.printf("%20s: %s\n", "VolumeSize", volumeSize);
             }
+            System.err.printf("Entries: Files %d, Directories %d\n", this.nFiles, this.nDirectories);
+            System.err.printf("Image Size %d sectors, %d, %d wasted\n", out.nExtent, volumeSize, out.nWasted);
         } while (out.nStatus-- != 0);
     }
 }
