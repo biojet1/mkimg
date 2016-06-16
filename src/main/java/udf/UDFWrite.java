@@ -57,38 +57,68 @@ public class UDFWrite {
         }
     }
 
-    public static int putDString(ByteBuffer b, String s, final int len) {
-        int i;
-        int j;
-        final int l = s.length();
-        final int n = len - 1;
-        i = 0;
-        j = 0;
+    public static void putDString(ByteBuffer b, String s, final int len, boolean compact) {
+        if (s.isEmpty()) {
+            zfill(b, len);
+            return;
+        }
+        int n, j;
+        final int l = s.length(), m = b.position();
         b.mark();
+        n = len - 2;
+        j = 0;
         b.put((byte) 8);
-        while ((i++ < n) && (j < l)) {
+        while ((j < l) && (n > 0)) {
             char c = s.charAt(j++);
             if (c > 255) {
-                i = 0;
-                j = 0;
                 b.reset();
+                n = len - 2;
+                j = 0;
                 b.put((byte) 16);
-                while ((i++ < n) && (j < l)) {
-                    b.put((byte) ((s.charAt(j++) & 65280) >> 8));
-                    if (i++ < n) {
-                        b.put((byte) ((s.charAt(j++) & 255)));
+                while ((j < l) && (n > 0)) {
+                    c = s.charAt(j++);
+                    if (c < 0x10000) {
+                        b.put((byte) ((c & 0xff00) >> 8));
+                        n--;
+                        if (n > 0) {
+                            b.put((byte) ((c & 0x00FF)));
+                            n--;
+                        }
+                    } else {
+                        int L = ((c) >> 10) + 0xd7c0;
+                        b.put((byte) ((L & 0xff00) >> 8));
+                        n--;
+                        if (n > 0) {
+                            b.put((byte) ((L & 0x00FF)));
+                            n--;
+                            if (n > 0) {
+                                int T = ((c) & 0x3ff) | 0xdc00;
+                                b.put((byte) ((T & 0xff00) >> 8));
+                                n--;
+                                if (n > 0) {
+                                    b.put((byte) ((T & 0x00FF)));
+                                    n--;
+                                }
+                            }
+                        }
                     }
                 }
                 break;
             }
             b.put((byte) c);
+            n--;
         }
-        j = i;
-        while (i++ < n) {
-            b.put((byte) 0);
+        j = (b.position() - m);
+        assert (b.get(m) == 16 || b.get(m) == 8);
+        if (!compact) {
+            while (n-- > 0) {
+                b.put((byte) 0);
+            }
+//        System.err.printf("DString %d, %d\n", (b.position() - m) , (len - 1));
+            assert ((b.position() - m) == (len - 1));
+            b.put((byte) j);
+            assert ((b.position() - m) == len);
         }
-        b.put((byte) j);
-        return i;
     }
 
     public static void extentAd(ByteBuffer b, long pos, long len) {

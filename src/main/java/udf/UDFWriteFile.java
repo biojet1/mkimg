@@ -21,7 +21,7 @@ import static udf.UDFWrite.UDF_ICBTAG_FLAG_ARCHIVE;
 
 public class UDFWriteFile {
 
-    public static void fileEntry(final BlockSink out, final Inode ino, final long uniqId, final byte[] imId, long rbaData, long rbaEntry) throws IOException {
+    public static void fileEntry(final BlockSink out, final Inode ino, final long uniqId, final byte[] imId, long rbaEntry, long rbaData) throws IOException {
         long length = ino.size;
         final ByteBuffer b = out.getBuffer();
         // struct FileEntry { // ECMA 167 4/14.9 
@@ -34,7 +34,7 @@ public class UDFWriteFile {
             b.putInt(0);
             // Strategy Type Uint16
             b.putShort((short) 4);
-            // Strategy Parameter bytes
+            // Strategy Parameter bytes byte[2];
             b.putShort((short) 0);
             // Maximum Number of Entries Uint16
             b.putShort((short) 1);
@@ -71,9 +71,11 @@ public class UDFWriteFile {
         //Uint64 LogicalBlocksRecorded;
         b.putLong(out.calcBlocks(length));
 //struct timestamp AccessTime;
-        UDFWrite.putTimestamp(b, OffsetDateTime.MIN);
+        UDFWrite.putTimestamp(b, OffsetDateTime.now().minusHours(1));
 //struct timestamp ModificationTime;
+        UDFWrite.putTimestamp(b, OffsetDateTime.now().minusHours(1));
 //struct timestamp AttributeTime;
+        UDFWrite.putTimestamp(b, OffsetDateTime.now().minusHours(1));
         //Uint32 Checkpoint; Monotonic increasing numeric tag.
         b.putInt(1);
         //struct long_ad ExtendedAttributeICB;
@@ -86,7 +88,8 @@ public class UDFWriteFile {
         //Uint32 LengthofExtendedAttributes;
         b.putInt(0);
         //Uint32 LengthofAllocationDescriptors; length, in bytes, of the Allocation Descriptors field
-        b.putInt(0); // later
+        System.err.println("LengthofAllocationDescriptors: " + b.position());
+        b.putInt(123); // later
         //byte ExtendedAttributes[];
         //byte AllocationDescriptors[];
         int chunk;
@@ -96,14 +99,17 @@ public class UDFWriteFile {
             b.putInt(chunk).putInt((int) rbaData);
             rbaData += chunk >> 11;
         }
-        b.putInt(212, b.position() - ad);
+        assert (b.getInt(172) == 123);
+//        assert (b.getInt(212) == 123);
+        b.putInt(172, b.position() - ad);
         // NOTE: UDF DVD Video Compat: files to be less than or equal to 2**30 - 1 Sector (0x40000000-0x800 = 0x3ffff800) bytes in length.
         // TODO: 0x3ffff800 is for 2048 bytes block
         // Write
         out.writep(UDFWrite.descriptorTag(b, (short) 261, rbaEntry, b.position()).array(), 0, b.position());
     }
 
-    public static int fileItem(final BlockSink out, final Inode ino, String name, long rbaEntry, long rbaData) throws IOException {
+    public static int fileItem(final BlockSink out, final  Node<Inode> cur, String name, long rbaEntry, long rbaData) throws IOException {
+        Inode ino = cur.getData();
         short len_impl_use = 0;
         int len_file_id = 0;
         //struct FileIdentifierDescriptor { // ISO 13346 4/14.4 
@@ -135,7 +141,8 @@ public class UDFWriteFile {
                 //Uint16 flags;
                 b.putShort((short) 0);
                 //byte impUse[4];
-                b.putInt(0);
+//                b.putInt(0);
+                b.putInt((int)ino.auxA);
             }
         }
         //Uint16 LengthofImplementationUse;
@@ -147,22 +154,21 @@ public class UDFWriteFile {
         //char FileIdentifier[??];
         if (name != null && !name.isEmpty()) {
             int i = b.position();
-            UDFWrite.putDString(b, name, 255);
+            UDFWrite.putDString(b, name, 255, true);
             b.put(19, (byte) (b.position() - i));
         }
         //byte Padding[??];
+//        System.err.printf("pad %s %d %d\n", name, b.position(), (b.position() & (4 - 1)));
         while ((b.position() & (4 - 1)) != 0) {
             b.put((byte) 0);
         }
         // Write
         int length = b.position();
-        out.writep(UDFWrite.descriptorTag(b, (short) 257, rbaEntry, length).array(), 0, length);
+        out.write(UDFWrite.descriptorTag(b, (short) 257, rbaEntry, length).array(), 0, length);
         assert (length > 38);
         assert (length <= out.blockSize);
         return length;
     }
-
-
 
     public static void fileData(final BlockSink out, final Inode ino, byte[] buf, final long size, MessageDigest md, boolean interActive) throws IOException {
         InputStream in;

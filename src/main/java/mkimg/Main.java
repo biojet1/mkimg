@@ -40,7 +40,7 @@ public class Main {
         fs.getRoot().writeTree(System.out, 0);
         UDFBuild udf = new UDFBuild();
         BlockSink sink = new BlockSink();
-        udf.build(sink, fs.getRoot());
+        udf.build(sink, fs.getRoot(), out);
     }
 }
 /*

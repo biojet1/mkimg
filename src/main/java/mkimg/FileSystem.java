@@ -8,13 +8,14 @@ import java.nio.file.attribute.BasicFileAttributeView;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Hashtable;
 import java.util.Iterator;
+import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Stream;
 
 public class FileSystem {
-    // sources tree   
 
+    // sources tree   
     private TreeNode root = null;
     boolean cacheInodes = false;
     boolean followLinks = false;
@@ -35,10 +36,18 @@ public class FileSystem {
     int setArchived = 2;
     int fsLayout = 3;
 //    Hashtable<Object, Inode> inoCache = null;
-    Hashtable<Object, Inode> inoCache = new Hashtable<>();
+    Map<Object, Inode> inoCache = new Hashtable<>();
 
     void addPath(String target) throws IOException {
-        addPath(getRoot(), Paths.get(target));
+        Path path = Paths.get(target);
+        BasicFileAttributes a = readAttributes(path);
+        TreeNode dir = getRoot();
+        if (a.isDirectory()) {
+            dir.getData().supply(a);
+            walk(dir, path);
+        } else {
+            addPath(dir, path);
+        }
     }
 
     synchronized TreeNode getRoot() {

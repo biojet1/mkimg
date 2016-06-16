@@ -14,7 +14,7 @@ public class BlockSink {
     long nLeft = 0;
     long nWasted = 0;
     public int blockSize = 2048;
-    OutputStream out = null;
+    private OutputStream out = null;
 
     public BlockSink() {
 
@@ -23,6 +23,10 @@ public class BlockSink {
     public ByteBuffer getBuffer() {
         buf.clear();
         return buf;
+    }
+
+    public void setOutputStream(OutputStream out) {
+        this.out = out;
     }
 
     public void write(byte[] b, int off, int len) throws IOException {
