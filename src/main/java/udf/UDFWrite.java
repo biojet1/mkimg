@@ -1,7 +1,10 @@
 package udf;
 
 import java.nio.ByteBuffer;
+import java.nio.file.attribute.FileTime;
+import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.Arrays;
 
 public class UDFWrite {
@@ -137,6 +140,16 @@ public class UDFWrite {
         b.put((byte) 0); // Uint8 Centiseconds;
         b.put((byte) 0); // Uint8 HundredsofMicroseconds;
         b.put((byte) 0); // Uint8 Microseconds;
+    }
+
+    public static void putTimestamp(ByteBuffer b, Object o) {
+        if (o instanceof OffsetDateTime) {
+            putTimestamp(b, (OffsetDateTime) o);
+        } else if (o instanceof FileTime) {
+            putTimestamp(b, OffsetDateTime.ofInstant(((FileTime) o).toInstant(), ZoneId.systemDefault()));
+        } else {
+            putTimestamp(b, OffsetDateTime.ofInstant((Instant) o, ZoneId.systemDefault()));
+        }
     }
 
     public static void entityId(ByteBuffer b, String id) {

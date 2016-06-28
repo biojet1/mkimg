@@ -6,9 +6,14 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.attribute.BasicFileAttributeView;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.util.HashMap;
 import java.util.Hashtable;
+import java.util.IdentityHashMap;
 import java.util.Iterator;
+import java.util.LinkedHashSet;
+import java.util.LinkedList;
 import java.util.Map;
+import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Stream;
@@ -30,6 +35,7 @@ public class FileSystem {
     boolean noEmptyDirs = false;
     boolean noEmptyFiles = false;
     boolean compactSpace = false;
+    boolean noDirTime = true;
     int sortSize = 2;
     int sortEntries = 2;
     int verbosity = 2;
@@ -43,7 +49,7 @@ public class FileSystem {
         BasicFileAttributes a = readAttributes(path);
         TreeNode dir = getRoot();
         if (a.isDirectory()) {
-            dir.getData().supply(a);
+            dir.getData().supply(a, noDirTime);
             walk(dir, path);
         } else {
             addPath(dir, path);
@@ -146,22 +152,80 @@ public class FileSystem {
     }
 
     Inode fetch(Path path) throws IOException {
+        Inode ino;
+        BasicFileAttributes a = Files.getFileAttributeView(path, BasicFileAttributeView.class).readAttributes();
         if (inoCache != null) {
-            BasicFileAttributes a = Files.getFileAttributeView(path, BasicFileAttributeView.class).readAttributes();
             Object id = a.fileKey();
             if (id != null) {
-                Inode ino = inoCache.get(id);
+                ino = inoCache.get(id);
                 if (ino == null) {
-                    ino = Inode.fromFile(path);
+                    ino = Inode.ofFile(path, a);
                     inoCache.put(id, ino);
                     System.err.print("CACHE:MIS");
                 } else {
                     System.err.print("CACHE:HIT");
                 }
                 System.err.println(path);
+                ino.supply(a, ino.isDirectory() ? noDirTime : false);
                 return ino;
             }
         }
-        return Inode.fromFile(path);
+        ino = Inode.ofFile(path, a);
+        ino.supply(a, ino.isDirectory() ? noDirTime : false);
+        return ino;
+    }
+
+    void zeroSize() throws IOException {
+        Iterator<Node<Inode>> w = getRoot().depthFirstIterator();
+        while (w.hasNext()) {
+            Node<Inode> cur = w.next();
+            Inode ino = cur.getData();
+            if (!ino.isDirectory()) {
+                ino.size = 0;
+            }
+        }
+    }
+
+    void trimEmpty() throws IOException {
+        Iterator<Node<Inode>> w = getRoot().depthFirstIterator();
+        while (w.hasNext()) {
+            Node<Inode> cur = w.next();
+            Inode ino = cur.getData();
+            if (ino.isDirectory()) {
+            } else if (ino.size == 0) {
+
+            } else {
+                ino.nlink++;
+            }
+        }
+    }
+
+    void mergeDuplicate() throws IOException {
+        // Generate size map
+        Iterator<Node<Inode>> w = getRoot().depthFirstIterator();
+        HashMap<Long, LinkedHashSet<Inode>> sizeMap = new HashMap<>();
+        while (w.hasNext()) {
+            Node<Inode> cur = w.next();
+            Inode ino = cur.getData();
+            if (!ino.isDirectory() && !ino.isManifest() && !ino.isCommand() && ino.size > 0) {
+                assert (ino.size <= Long.MAX_VALUE);
+                LinkedHashSet<Inode> inoSet = sizeMap.get(ino.size);
+                if (inoSet == null) {
+                    sizeMap.put(ino.size, inoSet = new LinkedHashSet<>());
+                }
+                inoSet.add(ino);
+            }
+        }// For each distinct size list, ...
+        if (sizeMap.size() < 1) {
+            return;
+        }
+      //  sizeMap.values().
+        for (Map.Entry<Long, LinkedHashSet<Inode>> entry : sizeMap.entrySet()) {
+            LinkedHashSet<Inode> inoSet = entry.getValue();
+            if (inoSet.size() > 1) {
+
+            }
+        }
+
     }
 }

@@ -11,23 +11,14 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.attribute.BasicFileAttributeView;
+import java.nio.file.Paths;
 import java.nio.file.attribute.BasicFileAttributes;
-import java.nio.file.attribute.FileTime;
-import java.nio.file.attribute.PosixFileAttributeView;
 import java.nio.file.attribute.PosixFileAttributes;
 import java.nio.file.attribute.PosixFilePermission;
-import java.time.Instant;
-import java.time.OffsetDateTime;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.ZoneOffset;
-import java.time.temporal.TemporalField;
-import java.util.NoSuchElementException;
-import java.util.concurrent.TimeUnit;
 
-/**
- *
- * @author U-1
- */
 public abstract class Inode {
 // permission
 
@@ -52,27 +43,52 @@ public abstract class Inode {
     static final int S_IFLNK = 0120000;
     static ZoneOffset tzOffset = null;
 // extra
-    static final int X_HIDDEN = 1 << 16;
-    static final int X_IGNORE = 1 << 17;
+    static final int X_IS_MANIFEST = 1 << 16;
+    static final int X_IS_COMMAND = 1 << 17;
+    static String HASH_ALGORITHM = "MD5";
 // Attributes
     public int mode = 0;
     public int uid = 0;
     public int gid = 0;
-    public long size = Long.MIN_VALUE;
-    public long mtime = Long.MIN_VALUE;
-    public long ctime = Long.MIN_VALUE;
-    public long atime = Long.MIN_VALUE;
-    public short mtimeo = Short.MIN_VALUE;
-    public short ctimeo = Short.MIN_VALUE;
-    public short atimeo = Short.MIN_VALUE;
+    public long size = -1;
+//    public long mtime = Long.MIN_VALUE;
+//    public long ctime = Long.MIN_VALUE;
+//    public long atime = Long.MIN_VALUE;
+    public Object mtime = null;
+    public Object ctime = null;
+    public Object atime = null;
+//    public short mtimeo = Short.MIN_VALUE;
+//    public short ctimeo = Short.MIN_VALUE;
+//    public short atimeo = Short.MIN_VALUE;
 // Build Attributes
     public int sort = 0;
     public int nlink = 0;
     public int flag = 0;
     public long auxA = 0;
     public long auxB = 0;
-    public byte[] hash = null;
+    private byte[] hash = null;
 //
+
+    public byte[] getHash() {
+        byte[] _hash = this.hash;
+        if (null == _hash) {
+            synchronized (this) {
+                _hash = this.hash;
+                if (_hash == null) {
+                    try {
+                        this.hash = _hash = this.calcHash();
+                    } catch (IOException ex) {
+                        throw new RuntimeException(ex);
+                    }
+                }
+            }
+        }
+        return _hash;
+    }
+
+    public void setHash(byte[] hash) {
+        this.hash = hash;
+    }
 
     public Inode(int mode) {
         this.mode = mode;
@@ -91,8 +107,12 @@ public abstract class Inode {
         return (S_IFDIR & mode) == S_IFDIR;
     }
 
-    public boolean isHidden() {
-        return (X_HIDDEN & mode) == X_HIDDEN;
+    public boolean isManifest() {
+        return (X_IS_MANIFEST & mode) == X_IS_MANIFEST;
+    }
+
+    public boolean isCommand() {
+        return (X_IS_COMMAND & mode) == X_IS_COMMAND;
     }
 
     public int getFileType() {
@@ -103,31 +123,19 @@ public abstract class Inode {
         return (0x0FFF & mode);
     }
 
-    public boolean hasModifiedTime() {
-        return this.mtimeo != Short.MIN_VALUE;
-    }
-
-    public void setModifiedTime(FileTime t) {
-        if (tzOffset == null) {
-            this.mtime = t.to(TimeUnit.MICROSECONDS);
-            this.mtimeo = 0;
-        } else {
-            this.mtime = t.to(TimeUnit.MICROSECONDS);
-            this.mtimeo = (short) (tzOffset.getTotalSeconds() / 60);
-            assert (this.mtimeo == Short.MIN_VALUE);
+    static public MessageDigest getMessageDigest() {
+        try {
+            return MessageDigest.getInstance(HASH_ALGORITHM);
+        } catch (NoSuchAlgorithmException ex) {
+            throw new RuntimeException(ex);
         }
     }
 
-    public OffsetDateTime getModifiedTime() {
-        if (hasModifiedTime()) {
-            return OffsetDateTime.ofInstant(Instant.ofEpochSecond(this.mtime / (1000 * 1000), this.mtime % (1000 * 1000)), ZoneOffset.ofTotalSeconds(this.mtimeo * 60));
-        }
-        throw new NoSuchElementException("ModifiedTime");
-    }
+    abstract public byte[] calcHash() throws IOException;
 
     abstract public InputStream getInputStream() throws IOException;
 
-    public void supply(BasicFileAttributes a) {
+    public void supply(BasicFileAttributes a, boolean noTime) {
         if (a.isDirectory()) {
             if (this.getFileType() == 0) {
                 this.mode |= S_IFDIR;
@@ -136,18 +144,20 @@ public abstract class Inode {
             if (this.getFileType() == 0) {
                 this.mode |= S_IFREG;
             }
-            if (size == Long.MIN_VALUE) {
+            if (size == -1) {
                 this.size = a.size();
             }
         }
-        if (this.atime == Long.MIN_VALUE) {
-            this.atime = a.lastAccessTime().toMillis();
-        }
-        if (this.mtime == Long.MIN_VALUE) {
-            this.mtime = a.lastModifiedTime().toMillis();
-        }
-        if (this.ctime == Long.MIN_VALUE) {
-            this.ctime = a.creationTime().toMillis();
+        if (!noTime) {
+            if (this.atime == null) {
+                this.atime = a.lastAccessTime();
+            }
+            if (this.mtime == null) {
+                this.mtime = a.lastModifiedTime();
+            }
+            if (this.ctime == null) {
+                this.ctime = a.creationTime();
+            }
         }
     }
 
@@ -187,11 +197,8 @@ public abstract class Inode {
         }
     }
 
-    static Inode fromFile(Path path) throws IOException {
+    static Inode ofFile(Path path, BasicFileAttributes a) throws IOException {
         Inode ino;
-        BasicFileAttributes a = Files.getFileAttributeView(path, BasicFileAttributeView.class).readAttributes();
-//        System.err.print(path);
-//        System.err.print(' ');
         if (a.isDirectory()) {
 //            System.err.println("DIR");
             ino = new File(S_IFDIR, path.toString());
@@ -213,18 +220,26 @@ public abstract class Inode {
                 ino.size = a.size();
             }
         }
-        ino.supply(a);
-        //
-        PosixFileAttributeView pv = Files.getFileAttributeView(path, PosixFileAttributeView.class);
-        if (pv != null) {
-            ino.supply(pv.readAttributes());
-        }
         return ino;
     }
+    static int BUF_SIZE = 4 * 1024 * 1024;
 
     static public class File extends Inode {
 
         public String path;
+
+        @Override
+        public byte[] calcHash() throws IOException {
+            MessageDigest md = getMessageDigest();
+            byte[] buf;
+            try (InputStream in = Files.newInputStream(Paths.get(this.path))) {
+                buf = new byte[BUF_SIZE];
+                for (int len; (len = in.read(buf)) != -1;) {
+                    md.update(buf, 0, len);
+                }
+                return md.digest();
+            }
+        }
 
         public File(int mode, String path) {
             super(mode);
@@ -243,6 +258,28 @@ public abstract class Inode {
         @Override
         public InputStream getInputStream() throws FileNotFoundException {
             return new FileInputStream(path);
+        }
+
+    }
+
+    static public class Manifest extends Inode {
+
+        public Manifest(int mode) {
+            super(S_IFREG | X_IS_MANIFEST | mode);
+        }
+
+        public Manifest() {
+            super(X_IS_MANIFEST | S_IFREG);
+        }
+
+        @Override
+        public byte[] calcHash() throws IOException {
+            throw new UnsupportedOperationException("Not supported yet."); //To change body of generated methods, choose Tools | Templates.
+        }
+
+        @Override
+        public InputStream getInputStream() throws IOException {
+            throw new UnsupportedOperationException("Not supported yet."); //To change body of generated methods, choose Tools | Templates.
         }
 
     }

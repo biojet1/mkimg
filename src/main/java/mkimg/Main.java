@@ -10,6 +10,10 @@ public class Main {
         FileSystem fs = new FileSystem();
         String out = null;
         Iterator<String> argv = Arrays.stream(args).iterator();
+        boolean addManifest = false;
+        boolean zeroSize = false;
+        int blockSize = 0;
+        String volLabel = null;
         for (int dash = 0; argv.hasNext();) {
             String arg = argv.next();
             if (dash > 1 || !arg.startsWith("-")) {
@@ -23,6 +27,9 @@ public class Main {
                 out = arg;
             } else if ("--find".equals(arg) && argv.hasNext()) {
                 arg = argv.next();
+            } else if ("-V".equals(arg) && argv.hasNext()) {
+                arg = argv.next();
+                volLabel = arg;
             } else if (("--config".equals(arg) || "-p".equals(arg)) && argv.hasNext()) {
                 arg = argv.next();
             } else if (("--include".equals(arg) || "-I".equals(arg)) && argv.hasNext()) {
@@ -33,21 +40,49 @@ public class Main {
                 fs.linkDuplicates = true;
             } else if (("--follow-links".equals(arg) || "-f".equals(arg))) {
                 fs.followLinks = true;
+            } else if ("--manifest".equals(arg) || "--checksum".equals(arg)) {
+                addManifest = true;
+            } else if ("--zero-size".equals(arg)) {
+                zeroSize = true;
+            } else if ("--hd".equals(arg)) {
+                blockSize = 512;
             } else {
                 throw new RuntimeException("Unexpected argument : \"" + arg + "\"");
             }
         }
-        fs.getRoot().writeTree(System.out, 0);
+//        fs.getRoot().writeTree(System.out, 0);
+        if (addManifest) {
+            Node man = (TreeNode) ((TreeNode) fs.getRoot().internTree(".etc")).internFile("checksum");
+            man.setData(new Inode.Manifest());
+            for (;;) {
+
+                ((TreeNode) man).flag |= (TreeNode.HIDE | TreeNode.IGNORE);
+                man = man.getParent();
+                if (man == null || man.getChildren().size() > 1) {
+                    break;
+                }
+            }
+        }
+        if (zeroSize) {
+            fs.zeroSize();
+        }
+
         UDFBuild udf = new UDFBuild();
+        udf.addManifest = addManifest;
+        if (volLabel != null) {
+            udf.logicalVolumeIdentifier = volLabel;
+//            udf.volumeSetIdentifier = volLabel;
+            udf.fileSetIdentifier = volLabel;
+        }
         BlockSink sink = new BlockSink();
+        if (blockSize > 0) {
+            sink.setBlockSize(blockSize);
+        }
         udf.build(sink, fs.getRoot(), out);
+
     }
 }
 /*
-
-
-		}else if(opt_get_bool(&o, ('H'), ("link-duplicates"))){
-			db.linkDuplicates = !!o.bparam;
 		}else if(opt_get_bool(&o, ('k'), ("check-duplicates"))){
 			db.checkDuplicates = !!o.bparam;
 		}else if(opt_get_bool(&o, ('i'), ("interactive"))){

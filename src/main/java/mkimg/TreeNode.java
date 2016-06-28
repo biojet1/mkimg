@@ -13,6 +13,9 @@ public class TreeNode implements Node<Inode> {
     String path;
     Node parent;
     Inode data;
+    public int flag = 0;
+    static final int IGNORE = 1;
+    static final int HIDE = 2;
 
     @Override
     public String getName() {
@@ -46,6 +49,10 @@ public class TreeNode implements Node<Inode> {
             }
         }
         return null;
+    }
+
+    public boolean isHidden() {
+        return (HIDE & flag) == HIDE;
     }
 
     public void writeTree(final PrintStream out, final int depth) throws IOException {

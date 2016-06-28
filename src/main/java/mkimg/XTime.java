@@ -5,6 +5,7 @@
  */
 package mkimg;
 
+import java.nio.ByteBuffer;
 import java.time.OffsetDateTime;
 
 /**
@@ -29,6 +30,7 @@ public class XTime {
         return (0 == ((x) >> 53));
     }
 
+    /*
     static public OffsetDateTime toOffsetDateTime(long x) {
         long y = ((x) >> 38) & 0x7FFF;
         if (y > ((1 << 14) - 1)) {
@@ -44,6 +46,32 @@ public class XTime {
             o -= (1 << 12);
         }
         return null;
-    }
+    }*/
 
+    public static void putTimestamp(long x, ByteBuffer b) {
+        long y = ((x) >> 38) & 0x7FFF;
+        if (y > ((1 << 14) - 1)) {
+            y -= (1 << 15);
+        }
+        byte l = (byte) (((x) >> 34) & 0xF);
+        byte d = (byte) (((x) >> 29) & 0x1F);
+        byte h = (byte) (((x) >> 24) & 0x1F);
+        byte m = (byte) (((x) >> 18) & 0x3F);
+        byte s = (byte) (((x) >> 12) & 0x3F);
+        short o = (short) ((x) & 0xfff);
+        if (o > ((1 << 11) - 1)) {
+            o -= (1 << 12);
+        }
+
+        b.putShort((short) ((1 << 12) | o)); // Uint16 TypeAndTimezone
+        b.putShort((short) y); // Uint16 TypeAndTimezone
+        b.put((byte) l); // Uint8 Month
+        b.put((byte) d); // Uint8 Day;
+        b.put((byte) h); // Uint8 Hour;
+        b.put((byte) m); // Uint8 Minute;
+        b.put((byte) s); // Uint8 Second;
+        b.put((byte) 0); // Uint8 Centiseconds;
+        b.put((byte) 0); // Uint8 HundredsofMicroseconds;
+        b.put((byte) 0); // Uint8 Microseconds;
+    }
 }

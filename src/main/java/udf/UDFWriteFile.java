@@ -9,6 +9,7 @@ import java.util.Arrays;
 import mkimg.BlockSink;
 import mkimg.Inode;
 import mkimg.Node;
+import mkimg.TreeNode;
 import static udf.UDFWrite.UDF_FILEENTRY_PERMISSION_GR;
 import static udf.UDFWrite.UDF_FILEENTRY_PERMISSION_GX;
 import static udf.UDFWrite.UDF_FILEENTRY_PERMISSION_OR;
@@ -71,11 +72,11 @@ public class UDFWriteFile {
         //Uint64 LogicalBlocksRecorded;
         b.putLong(out.calcBlocks(length));
 //struct timestamp AccessTime;
-        UDFWrite.putTimestamp(b, OffsetDateTime.now().minusHours(1));
+        UDFWrite.putTimestamp(b, ino.atime);
 //struct timestamp ModificationTime;
-        UDFWrite.putTimestamp(b, OffsetDateTime.now().minusHours(1));
+        UDFWrite.putTimestamp(b, ino.mtime);
 //struct timestamp AttributeTime;
-        UDFWrite.putTimestamp(b, OffsetDateTime.now().minusHours(1));
+        UDFWrite.putTimestamp(b, ino.ctime);
         //Uint32 Checkpoint; Monotonic increasing numeric tag.
         b.putInt(1);
         //struct long_ad ExtendedAttributeICB;
@@ -88,16 +89,14 @@ public class UDFWriteFile {
         //Uint32 LengthofExtendedAttributes;
         b.putInt(0);
         //Uint32 LengthofAllocationDescriptors; length, in bytes, of the Allocation Descriptors field
-        System.err.println("LengthofAllocationDescriptors: " + b.position());
         b.putInt(123); // later
         //byte ExtendedAttributes[];
         //byte AllocationDescriptors[];
-        int chunk;
         int ad = b.position();
-        for (; length > 0; length -= chunk) {
+        for (long chunk; length > 0; length -= chunk) {
             chunk = (length > 0x3ffff800) ? 0x3ffff800 : (int) (length);
-            b.putInt(chunk).putInt((int) rbaData);
-            rbaData += chunk >> 11;
+            b.putInt((int)chunk).putInt((int) rbaData);
+            rbaData += chunk /out.blockSize;
         }
         assert (b.getInt(172) == 123);
 //        assert (b.getInt(212) == 123);
@@ -108,7 +107,7 @@ public class UDFWriteFile {
         out.writep(UDFWrite.descriptorTag(b, (short) 261, rbaEntry, b.position()).array(), 0, b.position());
     }
 
-    public static int fileItem(final BlockSink out, final  Node<Inode> cur, String name, long rbaEntry, long rbaData) throws IOException {
+    public static int fileItem(final BlockSink out, final Node<Inode> cur, String name, long rbaEntry, long rbaData) throws IOException {
         Inode ino = cur.getData();
         short len_impl_use = 0;
         int len_file_id = 0;
@@ -119,7 +118,7 @@ public class UDFWriteFile {
         //Uint16 FileVersionNumber; // UDF-102: 2.3.4.1 Shall be set to 1
         b.putShort((short) 1);
         //Uint8 FileCharacteristics; // ECMA-167: 14.4.3  File Characteristics
-        b.put((byte) ((ino.isHidden() ? UDFWrite.UDF_FILE_CHARACTERISTIC_HIDDEN : 0)
+        b.put((byte) ((((TreeNode) cur).isHidden() ? UDFWrite.UDF_FILE_CHARACTERISTIC_HIDDEN : 0)
                 | (ino.isDirectory() ? (UDFWrite.UDF_FILE_CHARACTERISTIC_DIRECTORY
                         | (name == null ? UDFWrite.UDF_FILE_CHARACTERISTIC_PARENT : 0)) : 0))
         );
@@ -142,7 +141,7 @@ public class UDFWriteFile {
                 b.putShort((short) 0);
                 //byte impUse[4];
 //                b.putInt(0);
-                b.putInt((int)ino.auxA);
+                b.putInt((int) ino.auxA);
             }
         }
         //Uint16 LengthofImplementationUse;
@@ -202,6 +201,7 @@ public class UDFWriteFile {
         // Read/Write
         int nSize;
         long nRemain = size;
+        long tick = 0;
         while (nRemain > 0) {
             nSize = in.read(buf);
             // Cut ?
@@ -215,6 +215,10 @@ public class UDFWriteFile {
             if (md != null) {
                 md.update(buf, 0, nSize);
             }
+            if (out.nExtent > tick) {
+                tick = out.nExtent + ((32 * 1024 * 1024) / out.blockSize);
+                System.err.printf("@%9d %.2fMiB... \r", out.nExtent, (out.nExtent / (1024.0 * 1024.0)) * out.blockSize);
+            }
         }
         // Pad?
         if (nRemain != 0) {
@@ -225,10 +229,11 @@ public class UDFWriteFile {
         // Check MD:
         MD:
         if (md != null) {
-            byte[] d = md.digest();
-            if (ino.hash == null) {
-                ino.hash = d;
-            } else if (!Arrays.equals(d, ino.hash)) {
+            byte[] hash_0 = md.digest();
+            byte[] hash_1 = ino.getHash();
+            if (hash_1 == null) {
+                ino.setHash(hash_0);
+            } else if (!Arrays.equals(hash_0, hash_1)) {
                 System.err.println("Digest mismatched!");
                 while (interActive) {
                     System.err.println("[A]bort [C]ontinue:");
@@ -240,7 +245,7 @@ public class UDFWriteFile {
                             return;
                         case 'C':
                         case 'c':
-                            ino.hash = d;
+                            ino.setHash(hash_0);
                             break MD;
                     }
                 }

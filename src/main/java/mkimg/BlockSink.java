@@ -5,16 +5,20 @@ import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 
-public class BlockSink {
+public class BlockSink extends OutputStream {
 
     ByteBuffer buf = ByteBuffer.allocate(1024 * 1024);
 //    ByteBuffer buf = ByteBuffer.allocateDirect(1024 * 1024);
-    public long nStatus = 0;
+    public long nStage = 0;
     public long nExtent = 0;
     long nLeft = 0;
     long nWasted = 0;
     public int blockSize = 2048;
     private OutputStream out = null;
+
+    public void setBlockSize(int blockSize) {
+        this.blockSize = blockSize;
+    }
 
     public BlockSink() {
 
@@ -29,11 +33,27 @@ public class BlockSink {
         this.out = out;
     }
 
+    @Override
     public void write(byte[] b, int off, int len) throws IOException {
         if (out != null) {
             out.write(b, off, len);
         }
         final long x = this.nLeft + len;
+        this.nExtent += (x / this.blockSize);
+        this.nLeft = (x % this.blockSize);
+    }
+
+    @Override
+    public void write(byte[] b) throws IOException {
+        this.write(b, 0, b.length);
+    }
+
+    @Override
+    public void write(int b) throws IOException {
+        if (out != null) {
+            out.write(b);
+        }
+        final long x = this.nLeft + 1;
         this.nExtent += (x / this.blockSize);
         this.nLeft = (x % this.blockSize);
     }

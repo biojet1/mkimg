@@ -3,6 +3,9 @@ package mkimg;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
+import java.util.function.Consumer;
+import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 
 public interface Node<T> extends Iterable<Node<T>> {
 
@@ -18,11 +21,20 @@ public interface Node<T> extends Iterable<Node<T>> {
 
     public void setData(T data);
 
-    public Node getParent();
+    public Node<T> getParent();
 
-//    default public boolean isRoot() {
-//        return getParent() == null;
-//    }
+    default public Node<T> getRoot() {
+        Node<T> cur = this;
+        Node<T> parent;
+        for (;;) {
+            parent = cur.getParent();
+            if (parent == null) {
+                return cur;
+            }
+            cur = parent;
+        }
+    }
+
     static class EmptyIterator<T> implements Iterator<Node<T>> {
 
         @Override
@@ -53,8 +65,38 @@ public interface Node<T> extends Iterable<Node<T>> {
         return new PostorderEnum(this);
     }
 
+    default public Iterable<Node<T>> depthFirstIterable() {
+        return () -> new PostorderEnum(this);
+    }
+
+    default public Stream<Node<T>> depthFirst() {
+        return StreamSupport.stream(depthFirstIterable().spliterator(), false);
+    }
+
     default public Iterator<Node<T>> ascentIterator() {
         return new Ascent(this);
+    }
+
+    default public void descend(Consumer<Node<T>> x) {
+        Node<T> parent = this.getParent();
+        if (parent != null) {
+            parent.descend(x);
+        }
+        x.accept(this);
+    }
+
+    default public String getPath(char sep) {
+        StringBuilder sb = new StringBuilder();
+        this.descend(x -> {
+            String name = x.getName();
+            if (x.getParent() != null) {
+                sb.append(sep);
+            }
+            if (name != null) {
+                sb.append(name);
+            }
+        });
+        return sb.toString();
     }
 
     class Ascent<V> implements Iterator<Node<V>> {

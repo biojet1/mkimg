@@ -5,6 +5,7 @@
  */
 package udf;
 
+import mkimg.Inode;
 import mkimg.Node;
 
 /**
@@ -13,7 +14,7 @@ import mkimg.Node;
  */
 public class DataDesc {
 
-    public final Node node;
+    public final Node<Inode> node;
     public final int seq;
     private final boolean is_entry;
 
