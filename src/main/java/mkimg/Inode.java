@@ -206,8 +206,6 @@ public abstract class Inode {
                 Path target = Files.readSymbolicLink(path);
                 ino.mode |= S_IFLNK;
                 ino.size = target.toString().getBytes("UTF-8").length;
-            } else {
-                ino.size = a.size();
             }
         } else {
 //            System.err.println("REG");

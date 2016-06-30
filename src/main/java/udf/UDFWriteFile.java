@@ -4,7 +4,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.security.MessageDigest;
-import java.time.OffsetDateTime;
 import java.util.Arrays;
 import mkimg.BlockSink;
 import mkimg.Inode;
@@ -93,28 +92,29 @@ public class UDFWriteFile {
         //byte ExtendedAttributes[];
         //byte AllocationDescriptors[];
         int ad = b.position();
-        for (long chunk; length > 0; length -= chunk) {
-            chunk = (length > 0x3ffff800) ? 0x3ffff800 : (int) (length);
-            b.putInt((int)chunk).putInt((int) rbaData);
-            rbaData += chunk /out.blockSize;
+        if (true) {   // NOTE: UDF DVD Video Compat: files to be less than or equal to 2**30 - 1 Sector (0x40000000-0x800 = 0x3ffff800) bytes in length.
+            final int BLK_SIZE = out.blockSize;
+            final int MAX_SIZE = 0x40000000 - BLK_SIZE;
+            for (long chunk; length > 0; length -= chunk) {
+                chunk = (length > MAX_SIZE) ? MAX_SIZE : length;
+                b.putInt((int) chunk).putInt((int) rbaData);
+                rbaData += chunk / BLK_SIZE;
+            }
         }
         assert (b.getInt(172) == 123);
-//        assert (b.getInt(212) == 123);
         b.putInt(172, b.position() - ad);
-        // NOTE: UDF DVD Video Compat: files to be less than or equal to 2**30 - 1 Sector (0x40000000-0x800 = 0x3ffff800) bytes in length.
-        // TODO: 0x3ffff800 is for 2048 bytes block
         // Write
         out.writep(UDFWrite.descriptorTag(b, (short) 261, rbaEntry, b.position()).array(), 0, b.position());
     }
 
     public static int fileItem(final BlockSink out, final Node<Inode> cur, String name, long rbaEntry, long rbaData) throws IOException {
-        Inode ino = cur.getData();
+        final Inode ino = cur.getData();
+        final int BLOCK_LEN = out.blockSize;
         short len_impl_use = 0;
-        int len_file_id = 0;
         //struct FileIdentifierDescriptor { // ISO 13346 4/14.4 
         final ByteBuffer b = out.getBuffer();
         //struct tag DescriptorTag;
-        b.clear().limit(out.blockSize).position(16);
+        b.clear().limit(BLOCK_LEN).position(16);
         //Uint16 FileVersionNumber; // UDF-102: 2.3.4.1 Shall be set to 1
         b.putShort((short) 1);
         //Uint8 FileCharacteristics; // ECMA-167: 14.4.3  File Characteristics
@@ -127,7 +127,7 @@ public class UDFWriteFile {
         //struct long_ad ICB; // ECMA-167: 14.4.5 This field shall specify the address of an ICB describing the file
         {
             //Uint32 ExtentLength;
-            b.putInt(out.blockSize);// out.blockSize == sizeof(inode)
+            b.putInt(BLOCK_LEN);// BLOCK_LEN == sizeof(inode)
             //struct Lb_addr ExtentLocation;
             {
                 //Uint32 LogicalBlockNumber;
@@ -165,11 +165,71 @@ public class UDFWriteFile {
         int length = b.position();
         out.write(UDFWrite.descriptorTag(b, (short) 257, rbaEntry, length).array(), 0, length);
         assert (length > 38);
-        assert (length <= out.blockSize);
+        assert (length <= BLOCK_LEN);
         return length;
     }
 
-    public static void fileData(final BlockSink out, final Inode ino, byte[] buf, final long size, MessageDigest md, boolean interActive) throws IOException {
+    public static int fileItem(final ByteBuffer b, final int BLOCK_LEN, final Node<Inode> cur, String name, long rbaEntry, long rbaData) throws IOException {
+        final Inode ino = cur.getData();
+        short len_impl_use = 0;
+        //struct FileIdentifierDescriptor { // ISO 13346 4/14.4 
+        //struct tag DescriptorTag;
+        b.clear().limit(BLOCK_LEN).position(16);
+        //Uint16 FileVersionNumber; // UDF-102: 2.3.4.1 Shall be set to 1
+        b.putShort((short) 1);
+        //Uint8 FileCharacteristics; // ECMA-167: 14.4.3  File Characteristics
+        b.put((byte) ((((TreeNode) cur).isHidden() ? UDFWrite.UDF_FILE_CHARACTERISTIC_HIDDEN : 0)
+                | (ino.isDirectory() ? (UDFWrite.UDF_FILE_CHARACTERISTIC_DIRECTORY
+                        | (name == null ? UDFWrite.UDF_FILE_CHARACTERISTIC_PARENT : 0)) : 0))
+        );
+        //Uint8 LengthofFileIdentifier;
+        b.put((byte) 0);// later
+        //struct long_ad ICB; // ECMA-167: 14.4.5 This field shall specify the address of an ICB describing the file
+        {
+            //Uint32 ExtentLength;
+            b.putInt(BLOCK_LEN);// BLOCK_LEN == sizeof(inode)
+            //struct Lb_addr ExtentLocation;
+            {
+                //Uint32 LogicalBlockNumber;
+                b.putInt((int) rbaData);
+                //Uint16 PartitionReferenceNumber;
+                b.putShort((short) 0);
+            }
+            //struct ADImpUse ImplementationUse;
+            {
+                //Uint16 flags;
+                b.putShort((short) 0);
+                //byte impUse[4];
+//                b.putInt(0);
+                b.putInt((int) ino.auxA);
+            }
+        }
+        //Uint16 LengthofImplementationUse;
+        b.putShort(len_impl_use);
+        //byte ImplementationUse[??];
+        if (len_impl_use > 0) {
+            UDFWrite.zfill(b, len_impl_use);
+        }
+        //char FileIdentifier[??];
+        if (name != null && !name.isEmpty()) {
+            int i = b.position();
+            UDFWrite.putDString(b, name, 255, true);
+            b.put(19, (byte) (b.position() - i));
+        }
+        //byte Padding[??];
+//        System.err.printf("pad %s %d %d\n", name, b.position(), (b.position() & (4 - 1)));
+        while ((b.position() & (4 - 1)) != 0) {
+            b.put((byte) 0);
+        }
+        // Write
+        int length = b.position();
+        UDFWrite.descriptorTag(b, (short) 257, rbaEntry, length);
+        assert (length > 38);
+        assert (length <= BLOCK_LEN);
+        return length;
+    }
+
+    public static long fileData(final BlockSink out, final Inode ino, byte[] buf, long size, MessageDigest md, boolean interActive) throws IOException {
         InputStream in;
         if (interActive) {
             RETRY:
@@ -186,7 +246,7 @@ public class UDFWriteFile {
                             case -1:
                                 ex.printStackTrace(System.err);
                                 System.exit(1);
-                                return;
+                                return Long.MIN_VALUE;
                             case 'R':
                             case 'r':
                                 continue RETRY;
@@ -199,30 +259,53 @@ public class UDFWriteFile {
             in = ino.getInputStream();
         }
         // Read/Write
-        int nSize;
-        long nRemain = size;
         long tick = 0;
-        while (nRemain > 0) {
-            nSize = in.read(buf);
-            // Cut ?
-            if (nRemain < nSize) {
-                nSize = (int) nRemain;
+        if (size < 0) {
+            size = 0;
+            for (int nSize;;) {
+                nSize = in.read(buf);
+                // Write
+                if (nSize > 0) {
+                    out.write(buf, 0, nSize);
+                    size += nSize;
+                } else if (nSize == -1) {
+                    break;
+                } else {
+                    assert (false);
+                }
+                // Calc MD
+                if (md != null) {
+                    md.update(buf, 0, nSize);
+                }
+                if (out.nExtent > tick) {
+                    tick = out.nExtent + ((32 * 1024 * 1024) / out.blockSize);
+                    System.err.printf("@%9d %7.2fMiB Written... \r", out.nExtent, (out.nExtent / (1024.0 * 1024.0)) * out.blockSize);
+                }
             }
-            // Write
-            out.write(buf, 0, nSize);
-            nRemain -= nSize;
-            // Calc MD
-            if (md != null) {
-                md.update(buf, 0, nSize);
+        } else {
+            long nRemain = size;
+            for (int nSize; nRemain > 0;) {
+                nSize = in.read(buf);
+                // Cut ?
+                if (nRemain < nSize) {
+                    nSize = (int) nRemain;
+                }
+                // Write
+                out.write(buf, 0, nSize);
+                nRemain -= nSize;
+                // Calc MD
+                if (md != null) {
+                    md.update(buf, 0, nSize);
+                }
+                if (out.nExtent > tick) {
+                    tick = out.nExtent + ((32 * 1024 * 1024) / out.blockSize);
+                    System.err.printf("@%9d %7.2fMiB Written... \r", out.nExtent, (out.nExtent / (1024.0 * 1024.0)) * out.blockSize);
+                }
             }
-            if (out.nExtent > tick) {
-                tick = out.nExtent + ((32 * 1024 * 1024) / out.blockSize);
-                System.err.printf("@%9d %.2fMiB... \r", out.nExtent, (out.nExtent / (1024.0 * 1024.0)) * out.blockSize);
+            // Pad?
+            if (nRemain != 0) {
+                assert (nRemain > 0);
             }
-        }
-        // Pad?
-        if (nRemain != 0) {
-            assert (nRemain > 0);
         }
         // Pad to block
         out.writep();
@@ -242,7 +325,7 @@ public class UDFWriteFile {
                         case 'a':
                         case -1:
                             System.exit(1);
-                            return;
+                            return Long.MIN_VALUE;
                         case 'C':
                         case 'c':
                             ino.setHash(hash_0);
@@ -251,5 +334,6 @@ public class UDFWriteFile {
                 }
             }
         }
+        return size;
     }
 }

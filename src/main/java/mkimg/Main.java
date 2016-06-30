@@ -7,79 +7,94 @@ import java.util.Iterator;
 public class Main {
 
     public static void main(String[] args) throws IOException {
-        FileSystem fs = new FileSystem();
-        String out = null;
-        Iterator<String> argv = Arrays.stream(args).iterator();
-        boolean addManifest = false;
-        boolean zeroSize = false;
         int blockSize = 0;
-        String volLabel = null;
-        for (int dash = 0; argv.hasNext();) {
-            String arg = argv.next();
-            if (dash > 1 || !arg.startsWith("-")) {
-                fs.addPath(arg);
-            } else if ("--".equals(arg)) {
-                dash = 2;
-            } else if ("--logs".equals(arg)) {
+        String out = null;
+        UDFBuild udf = new UDFBuild();
+        TreeNode root;
+        boolean compactImage = false;
+        {
+            String volLabel = null;
+            FileSystem fs = new FileSystem();
+            Iterator<String> argv = Arrays.stream(args).iterator();
+            boolean addManifest = false;
+            boolean zeroSize = false;
+            for (int dash = 0; argv.hasNext();) {
+                String arg = argv.next();
+                if (dash > 1 || !arg.startsWith("-")) {
+                    fs.addPath(arg);
+                } else if ("--".equals(arg)) {
+                    dash = 2;
+                } else if ("--logs".equals(arg)) {
 
-            } else if (("--output".equals(arg) || "-o".equals(arg)) && argv.hasNext()) {
-                arg = argv.next();
-                out = arg;
-            } else if ("--find".equals(arg) && argv.hasNext()) {
-                arg = argv.next();
-            } else if ("-V".equals(arg) && argv.hasNext()) {
-                arg = argv.next();
-                volLabel = arg;
-            } else if (("--config".equals(arg) || "-p".equals(arg)) && argv.hasNext()) {
-                arg = argv.next();
-            } else if (("--include".equals(arg) || "-I".equals(arg)) && argv.hasNext()) {
-                arg = argv.next();
-            } else if (("--cache-inodes".equals(arg) || "-h".equals(arg)) && argv.hasNext()) {
-                fs.cacheInodes = true;
-            } else if (("--link-duplicates".equals(arg) || "-H".equals(arg)) && argv.hasNext()) {
-                fs.linkDuplicates = true;
-            } else if (("--follow-links".equals(arg) || "-f".equals(arg))) {
-                fs.followLinks = true;
-            } else if ("--manifest".equals(arg) || "--checksum".equals(arg)) {
-                addManifest = true;
-            } else if ("--zero-size".equals(arg)) {
-                zeroSize = true;
-            } else if ("--hd".equals(arg)) {
-                blockSize = 512;
-            } else {
-                throw new RuntimeException("Unexpected argument : \"" + arg + "\"");
-            }
-        }
-//        fs.getRoot().writeTree(System.out, 0);
-        if (addManifest) {
-            Node man = (TreeNode) ((TreeNode) fs.getRoot().internTree(".etc")).internFile("checksum");
-            man.setData(new Inode.Manifest());
-            for (;;) {
-
-                ((TreeNode) man).flag |= (TreeNode.HIDE | TreeNode.IGNORE);
-                man = man.getParent();
-                if (man == null || man.getChildren().size() > 1) {
-                    break;
+                } else if (("--output".equals(arg) || "-o".equals(arg)) && argv.hasNext()) {
+                    arg = argv.next();
+                    out = arg;
+                } else if ("--find".equals(arg) && argv.hasNext()) {
+                    arg = argv.next();
+                } else if ("-V".equals(arg) && argv.hasNext()) {
+                    arg = argv.next();
+                    volLabel = arg;
+                } else if (("--config".equals(arg) || "-p".equals(arg)) && argv.hasNext()) {
+                    arg = argv.next();
+                } else if (("--include".equals(arg) || "-I".equals(arg)) && argv.hasNext()) {
+                    arg = argv.next();
+                } else if (("--cache-inodes".equals(arg) || "-h".equals(arg)) && argv.hasNext()) {
+                    fs.cacheInodes = true;
+                } else if (("--link-duplicates".equals(arg) || "-H".equals(arg)) && argv.hasNext()) {
+                    fs.linkDuplicates = true;
+                } else if (("--follow-links".equals(arg) || "-f".equals(arg))) {
+                    fs.followLinks = true;
+                } else if ("--manifest".equals(arg) || "--checksum".equals(arg)) {
+                    addManifest = true;
+                } else if ("--zero-size".equals(arg)) {
+                    zeroSize = true;
+                } else if ("--compact".equals(arg)) {
+                    compactImage = true;
+                } else if ("--hd".equals(arg)) {
+                    blockSize = 512;
+                } else {
+                    throw new RuntimeException("Unexpected argument : \"" + arg + "\"");
                 }
             }
-        }
-        if (zeroSize) {
-            fs.zeroSize();
-        }
-
-        UDFBuild udf = new UDFBuild();
-        udf.addManifest = addManifest;
-        if (volLabel != null) {
-            udf.logicalVolumeIdentifier = volLabel;
-//            udf.volumeSetIdentifier = volLabel;
-            udf.fileSetIdentifier = volLabel;
+            root = fs.getRoot();
+            if (addManifest) {
+                udf.addManifest = true;
+                boolean useEtc = false;
+                for (Node<Inode> cur : root) {
+                    if (!cur.isLeaf()) {
+                        useEtc = true;
+                        break;
+                    }
+                }
+                if (useEtc) {
+                    Node man = (TreeNode) ((TreeNode) root.internTree(".etc")).internFile("checksum");
+                    man.setData(new Inode.Manifest());
+                    for (;;) {
+                        ((TreeNode) man).flag |= (TreeNode.HIDE | TreeNode.IGNORE);
+                        man = man.getParent();
+                        if (man == null || man.getChildren().size() > 1) {
+                            break;
+                        }
+                    }
+                } else {
+                    TreeNode man = (TreeNode) root.internFile("checksum");
+                    man.setData(new Inode.Manifest());
+                    man.flag |= (TreeNode.HIDE | TreeNode.IGNORE);
+                }
+            }
+            if (zeroSize) {
+                fs.zeroSize();
+            }
+            if (volLabel != null) {
+                udf.logicalVolumeIdentifier = volLabel;
+                udf.fileSetIdentifier = volLabel;
+            }
         }
         BlockSink sink = new BlockSink();
         if (blockSize > 0) {
             sink.setBlockSize(blockSize);
         }
-        udf.build(sink, fs.getRoot(), out);
-
+        udf.build(sink, root, out, compactImage);
     }
 }
 /*

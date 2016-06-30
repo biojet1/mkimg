@@ -1,30 +1,43 @@
-/*
- * To change this license header, choose License Headers in Project Properties.
- * To change this template file, choose Tools | Templates
- * and open the template in the editor.
- */
 package udf;
 
 import mkimg.Inode;
 import mkimg.Node;
 
-/**
- *
- * @author U-1
- */
-public class DataDesc {
+abstract public class DataDesc {
 
     public final Node<Inode> node;
     public final int seq;
-    private final boolean is_entry;
 
-    public DataDesc(Node node, int seq, boolean entry) {
+    public DataDesc(Node<Inode> node, int seq) {
         this.node = node;
         this.seq = seq;
-        this.is_entry = entry;
     }
 
-    public boolean isEntry() {
-        return this.is_entry;
+    abstract public boolean isEntry();
+
+    public static class Entry extends DataDesc {
+
+        public Entry(Node<Inode> node, int seq) {
+            super(node, seq);
+        }
+
+        @Override
+        public boolean isEntry() {
+            return true;
+        }
+
     }
+
+    public static class Data extends DataDesc {
+
+        public Data(Node<Inode> node, int seq) {
+            super(node, seq);
+        }
+
+        @Override
+        public boolean isEntry() {
+            return false;
+        }
+    }
+
 }

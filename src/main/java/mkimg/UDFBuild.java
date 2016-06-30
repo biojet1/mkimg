@@ -2,7 +2,6 @@ package mkimg;
 
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.PrintWriter;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.file.attribute.FileTime;
@@ -17,6 +16,7 @@ import java.util.Random;
 import udf.DataDesc;
 import udf.UDFWrite;
 import udf.UDFWriteFile;
+import static udf.UDFWriteFile.fileItem;
 import static udf.UDFWriteFile.fileItem;
 
 public class UDFBuild {
@@ -35,15 +35,14 @@ public class UDFBuild {
     private long lbaMainVolumeDesc;
     private long lbaUDFPartitionStart;
     byte[] ENTITYID_OSTA_COMPLIANT = new byte[]{'\00', '*', 'O', 'S', 'T', 'A', ' ', 'U', 'D', 'F', ' ', 'C', 'o', 'm', 'p', 'l', 'i', 'a', 'n', 't', '\00', '\00', '\00', '\00', '\02', '\01', '\03', '\00', '\00', '\00', '\00', '\00'};
-    private long lbaReserveVolumeDesc;
-    private long totalSectors;
-    private long lbaRootDirectoryStart;
+    private long lbaReserveVolumeDesc = -1;
     boolean addManifest = false;
 
     public UDFBuild() {
     }
 
     static void volumeRecognitionArea(BlockSink out) throws IOException {
+        System.err.printf("@%9d VRA\t\n", out.nExtent);
         assert ((out.blockSize % 512) == 0);
         assert ((32768 / out.blockSize) == out.nExtent);
         ByteBuffer b = out.getBuffer();
@@ -70,10 +69,11 @@ public class UDFBuild {
     }
 
     static void systemArea(BlockSink out) throws IOException {
-        out.padUpTo(32768 / out.blockSize);
+        padTo(out, 32768 / out.blockSize, "System Area");
     }
 
     void logicalVolumeIntegrityDesc(BlockSink out) throws IOException {
+        System.err.printf("@%9d LVI\t\n", out.nExtent);
         if (out.nStage > 0) {
             this.lbaIntegritySequence = out.nExtent;
         } else {
@@ -107,7 +107,7 @@ public class UDFBuild {
         // struct LogicalVolumeIntegrityDescImplementationUse ImplementationUse;
         {
             // struct EntityID ImplementationID;
-            UDFWrite.entityId(b, "mkimg");
+            b.put(this.applicationIdentifier);
             b.putInt(this.nFiles); // Uint32 NumberofFiles;
             b.putInt(this.nDirectories); // Uint32 NumberofDirectories;
             b.putShort((short) 0x102); // Uint16 MinimumUDFReadRevision;
@@ -120,6 +120,7 @@ public class UDFBuild {
     }
 
     void volumeDescriptorSequence(BlockSink out, boolean main) throws IOException {
+        System.err.printf("@%9d %cVDS\t\n", out.nExtent, main ? 'M' : 'R');
         if (main) {
             if (out.nStage > 0) {
                 this.lbaMainVolumeDesc = out.nExtent;
@@ -145,7 +146,7 @@ public class UDFBuild {
             b.putInt(0);
             // dstring VolumeIdentifier[32];
             assert (b.position() == 24);
-            UDFWrite.putDString(b, this.logicalVolumeIdentifier, 32, false);
+            UDFWrite.putDString(b, "UDF Volume", 32, false);
             // Uint16 VolumeSequenceNumber;
             assert (b.position() == 56);
             b.putShort((short) 1);
@@ -307,6 +308,7 @@ public class UDFBuild {
     }
 
     void anchorVolumeDescriptorPointer(BlockSink out) throws IOException {
+        System.err.printf("@%9d AVDP\t\n", out.nExtent);
         // struct AnchorVolumeDescriptorPointer  // ISO 13346 3/10.2
         ByteBuffer b = out.getBuffer();
         // struct tag DescriptorTag;
@@ -314,7 +316,11 @@ public class UDFBuild {
         // struct extent_ad MainVolumeDescriptorSequenceExtent;
         b.putInt(out.blockSize * 16).putInt((int) this.lbaMainVolumeDesc);
         // struct extent_ad ReserveVolumeDescriptorSequenceExtent;
-        b.putInt(out.blockSize * 16).putInt((int) this.lbaReserveVolumeDesc);
+        if (this.lbaReserveVolumeDesc > 0) {
+            b.putInt(out.blockSize * 16).putInt((int) this.lbaReserveVolumeDesc);
+        } else {
+            b.putInt(0).putInt(0);
+        }
         // byte Reserved[480];
         UDFWrite.zfill(b, 480);
         // Write
@@ -322,7 +328,8 @@ public class UDFBuild {
         assert (512 == b.position());
     }
 
-    void filesetDescriptor(BlockSink out) throws IOException {
+    void filesetDescriptor(BlockSink out, TreeNode root) throws IOException {
+        System.err.printf("@%9d FSD\t\n", out.nExtent);
 //struct FileSetDescriptor { /* ISO 13346 4/14.1 */
         ByteBuffer b = out.getBuffer();
 //        struct tag DescriptorTag;
@@ -355,7 +362,7 @@ public class UDFBuild {
         UDFWrite.putDString(b, "abstract", 32, false);
 //        struct long_ad RootDirectoryICB;
         b.putInt(out.blockSize);
-        b.putInt((int) (this.lbaRootDirectoryStart - this.lbaUDFPartitionStart)).putShort((short) 0);
+        b.putInt((int) (root.getData().auxA - this.lbaUDFPartitionStart)).putShort((short) 0);
         b.putShort((short) 0).putInt(0);
 //        struct EntityID DomainIdentifier;
         b.put(ENTITYID_OSTA_COMPLIANT);
@@ -367,13 +374,14 @@ public class UDFBuild {
         // Write
         out.writep(UDFWrite.descriptorTag(b, (short) 256, out.nExtent - this.lbaUDFPartitionStart, b.position()).array(), 0, b.position());
         assert (512 == b.position());
+        UDFBuild.terminatingDescriptor(out, out.nExtent - this.lbaUDFPartitionStart);
     }
 
     void pushEntry(LinkedList<DataDesc> extents, Node<Inode> node) {
         final Inode ino = node.getData();
         if ((ino.flag & 0x1) == 0) {
             ino.flag |= 0x1;
-            extents.add(new DataDesc(node, extents.size(), true));
+            extents.add(new DataDesc.Entry(node, extents.size()));
         }
     }
 
@@ -381,7 +389,7 @@ public class UDFBuild {
         final Inode ino = node.getData();
         if ((ino.flag & 0x2) == 0) {
             ino.flag |= 0x2;
-            extents.add(new DataDesc(node, extents.size(), false));
+            extents.add(new DataDesc.Data(node, extents.size()));
         }
     }
 
@@ -404,31 +412,20 @@ public class UDFBuild {
         Inode ino = cur.getData();
         String path = cur.getPath('/');
         if (ext.isEntry()) {
-            boolean isRoot = false;
-            if (ino.isDirectory()) {
-                if (cur.getParent() == null) {
-                    isRoot = true;
-                    if (out.nStage > 0) {
-                        this.lbaRootDirectoryStart = out.nExtent;
-                    } else {
-                        assert (this.lbaRootDirectoryStart == out.nExtent);
-                    }
-                }
-            }
+            System.err.printf("@%9d e %16d %s\t\n", out.nExtent, ino.auxB, path);
             if (out.nStage > 0) {
                 ino.auxA = out.nExtent++; // 1 block 
                 assert (ino.nlink > 0);
             } else {
                 assert (ino.auxA == out.nExtent);
-                assert (ino.auxB < this.totalSectors);
+                assert ((this.lbaReserveVolumeDesc < 0) || (ino.auxB < this.lbaReserveVolumeDesc));
                 assert ((ino.auxB == 0) || (ino.auxB > this.lbaUDFPartitionStart));
-                UDFWriteFile.fileEntry(out, ino, isRoot ? 0 : 16 + ext.seq, this.applicationIdentifier, ino.auxA - this.lbaUDFPartitionStart, ino.auxB - this.lbaUDFPartitionStart);
+                UDFWriteFile.fileEntry(out, ino, (cur.getParent() == null) ? 0 : 16 + ext.seq, this.applicationIdentifier, ino.auxA - this.lbaUDFPartitionStart, ino.auxB - this.lbaUDFPartitionStart);
             }
-            System.err.printf("@%9d e %16d %s\n", out.nExtent, ino.auxB, path);
         } else {
-            long id;
+            assert (out.nLeft == 0);
             if (ino.isDirectory()) {
-                System.err.printf("@%9d D %16d %s\n", out.nExtent, ino.size, path);
+                System.err.printf("@%9d D %16d %s\t\n", out.nExtent, ino.size, path);
                 long lbaBase = out.nExtent;
                 long rbaBase = lbaBase - lbaUDFPartitionStart;
                 long _size = 0;
@@ -440,15 +437,9 @@ public class UDFBuild {
                 for (Node<Inode> child : cur) {
                     Inode cIno = child.getData();
                     _size += fileItem(out, child, child.getName(), rbaBase + (_size / out.blockSize), cIno.auxA - lbaUDFPartitionStart);
-                    if (out.nStage > 0) {
-                        if (!cIno.isDirectory()) {
-                            this.nFiles++;
-                        }
-                    }
                 }
                 out.writep();
                 if (out.nStage > 0) {
-                    this.nDirectories++;
                     assert (rbaBase > 0);
                     assert (_size > 0);
                     assert (0 == ino.auxB);
@@ -456,16 +447,15 @@ public class UDFBuild {
                     ino.size = _size;
                 } else {
                     assert (ino.auxB > this.lbaUDFPartitionStart);
-                    assert (ino.auxB < this.totalSectors);
+                    assert ((this.lbaReserveVolumeDesc < 0) || (ino.auxB < this.lbaReserveVolumeDesc));
                     assert (ino.auxB == lbaBase);
                     assert (_size == ino.size);
                     assert (ino.size >= 0);
                     assert (ino.size < (this.partionSize * out.blockSize));
                 }
             } else {
-                System.err.printf("@%9d F %16d %s\n", out.nExtent, ino.size, path);
+                System.err.printf("@%9d F %16d %s\t\n", out.nExtent, ino.size, path);
                 if (out.nStage > 0) {
-                    assert (out.nLeft == 0);
                     assert (ino.auxB == 0);
                     assert (ino.size >= -1);
                     ino.auxB = out.nExtent;
@@ -481,7 +471,7 @@ public class UDFBuild {
                         }
                     }
                     long nSizePadded = out.calcBlocks(ino.size);
-                    assert (nSizePadded > 0);
+                    assert (nSizePadded >= 0);
                     out.nExtent += nSizePadded;
                 } else {
                     assert (out.nExtent == ino.auxB);
@@ -499,14 +489,28 @@ public class UDFBuild {
         }
     }
 
-    void partitionStart(BlockSink out) throws IOException {
+    void partitionStart(BlockSink out) {
+        System.err.printf("@%9d Partition Start\t\n", out.nExtent);
         if (out.nStage > 0) {
             this.lbaUDFPartitionStart = out.nExtent;
         } else {
             assert (this.lbaUDFPartitionStart == out.nExtent);
         }
-        filesetDescriptor(out);
-        UDFBuild.terminatingDescriptor(out, out.nExtent - this.lbaUDFPartitionStart);
+    }
+
+    void partitionEnd(BlockSink out) {
+        System.err.printf("@%9d Partition End\t\n", out.nExtent);
+        assert (out.nExtent > this.lbaUDFPartitionStart);
+        if (out.nStage > 0) {
+            this.partionSize = out.nExtent - this.lbaUDFPartitionStart;
+        } else {
+            assert ((out.nExtent - this.lbaUDFPartitionStart) == this.partionSize);
+        }
+    }
+
+    static void padTo(BlockSink out, int n, String name) throws IOException {
+        System.err.printf("@%9d %s %d blocks\t\n", out.nExtent, name == null ? "Pad" : name, n - out.nExtent);
+        out.padUpTo(n);
     }
 
     void supplyTree(TreeNode root) throws IOException {
@@ -517,7 +521,6 @@ public class UDFBuild {
             Inode ino = cur.getData();
             if (ino == null) {
                 cur.setData(ino = new Inode.File(!cur.isLeaf()));
-
             }
             assert (ino.getFileType() != 0);
             if (cur.isLeaf()) {
@@ -599,14 +602,18 @@ public class UDFBuild {
                 if (parent != null) {
                     parent.getData().nlink++;
                 }
-            } else if (ino.isManifest()) {
+                this.nDirectories++;
+            } else {
+                this.nFiles++;
+                if (ino.isManifest()) {
 
+                }
             }
             ino.nlink++;
         }
     }
 
-    void build(BlockSink out, TreeNode root, String outfile) throws IOException {
+    void build(BlockSink out, TreeNode root, String outfile, boolean compactImage) throws IOException {
         out.getBuffer().order(ByteOrder.LITTLE_ENDIAN);
 
         OffsetDateTime now = OffsetDateTime.now();
@@ -620,19 +627,11 @@ public class UDFBuild {
         supplyTree(root);
 // prep vars
         {
-
-            // Set Prefix
-            // now.
-            String setPrefix = String.format("%04d%02d%02dT%02d%02d%02d%s", now.getYear(), now.getMonth().getValue(), now.getDayOfMonth(), now.getHour(), now.getMinute(), now.getSecond(), now.getOffset());
             // Set VolumeSetIdentifier
-            if (volumeSetIdentifier == null || volumeSetIdentifier.isEmpty()) {
-
-            }
             // 	 - CS0 representation of unique hex number in first 8 character positions, UDF 2.2.2.5
             if (volumeSetIdentifier == null || volumeSetIdentifier.isEmpty()) {
                 Random rnd = new Random();
-                volumeSetIdentifier = String.format("%04X%04X-VSI", rnd.nextLong(), rnd.nextLong());
-
+                volumeSetIdentifier = String.format("%08X UDFBridge", rnd.nextInt());
             }
             // Set LogicalVolumeIdentifier
             if (logicalVolumeIdentifier == null || logicalVolumeIdentifier.isEmpty()) {
@@ -642,15 +641,14 @@ public class UDFBuild {
                 }
             }
             if (logicalVolumeIdentifier == null || logicalVolumeIdentifier.isEmpty()) {
-
-                logicalVolumeIdentifier = String.format("VOL-%S", Long.toString(now.toEpochSecond(), Character.MAX_RADIX));
+                logicalVolumeIdentifier = String.format("UDF%S", Long.toString(now.toEpochSecond(), Character.MAX_RADIX));
             }
             // Set FileSetIdentifier
             if (fileSetIdentifier == null || fileSetIdentifier.isEmpty()) {
                 fileSetIdentifier = String.format("FSI%X", now.toEpochSecond());
             }
             // Set ApplicationIdentifier
-            String appId = "mkimg-1.0";
+            String appId = "*Microsoft CDIMAGE UDF";
             if (applicationIdentifier == null) {
                 ByteBuffer b = ByteBuffer.allocate(32);
                 UDFWrite.entityId(b, appId);
@@ -690,22 +688,20 @@ public class UDFBuild {
         long volumeSize = 0;
         do {
             if (out.nStage > 0) {
-                System.err.println("Calculating ...");
+                System.err.print("\nCalculating ...\n\n");
             } else if (outfile == null || outfile.isEmpty()) {
-                System.err.println(out.nExtent);
+                System.out.println(out.nExtent);
                 break;
             } else if (outfile.equals("NUL")) {
-                System.err.println("Writing to nowhere ...");
+                System.err.print("\nWriting to nowhere ...\n\n");
             } else if (outfile.equals("-")) {
-                System.err.println("Writing to STDOUT...");
+                System.err.print("\nWriting to STDOUT...\n\n");
                 out.setOutputStream(System.out);
             } else if (outfile.charAt(0) == '|') {
                 String cmd = outfile.substring(1);
-                System.err.print("Piping to: ");
-                System.err.println(cmd);
+                System.err.printf("\nPiping to: %s\n\n", cmd);
             } else {
-                System.err.print("Writing to: ");
-                System.err.println(outfile);
+                System.err.printf("\nWriting to: %s\n\n", outfile);
                 out.setOutputStream(new FileOutputStream(outfile));
             }
 
@@ -718,38 +714,86 @@ public class UDFBuild {
             logicalVolumeIntegrityDesc(out);
             UDFBuild.terminatingDescriptor(out);
             PARTITION:
-            {
-                /////
-                {
-                    out.padUpTo(256 - 16);
+            if (true) {
+                if (!compactImage) {
+                    padTo(out, 256 - 16, null);
                     volumeDescriptorSequence(out, true);
-                    out.padUpTo(256);
+//                    padTo(out, 256);
                     anchorVolumeDescriptorPointer(out);
-                }
-                partitionStart(out);
-                {
+                    partitionStart(out);
+                    filesetDescriptor(out, root);
                     for (DataDesc desc : extents) {
                         writeExtent(out, desc);
                     }
-                }
-                PARTITION_END:
-                {
-                    assert (out.nExtent > this.lbaUDFPartitionStart);
-                    if (out.nStage > 0) {
-                        this.partionSize = out.nExtent - this.lbaUDFPartitionStart;
-                    } else {
-                        assert ((out.nExtent - this.lbaUDFPartitionStart) == this.partionSize);
+                    partitionEnd(out);
+                    volumeDescriptorSequence(out, false);
+                    anchorVolumeDescriptorPointer(out);
+                } else {
+                    partitionStart(out);
+                    filesetDescriptor(out, root);
+                    long padBlocks = 256 - 16 - out.nExtent;
+// compact
+                    LinkedList<DataDesc> extents2 = new LinkedList<>();
+                    Iterator<DataDesc> li = extents.iterator();
+                    while ((padBlocks > 0) && li.hasNext()) {
+                        DataDesc cur = li.next();
+                        if (cur.isEntry()) {
+                            writeExtent(out, cur);
+                            padBlocks--;
+                            continue;
+                        } else {
+//                            long size = cur.node.getData().size;
+//                            if (size > 0) {
+//                                long blocks = out.calcBlocks(size);
+//                                if (blocks <= padBlocks) {
+//                                    writeExtent(out, cur);
+//                                    padBlocks -= blocks;
+//                                    continue;
+//                                }
+//                            }
+                        }
+                        extents2.add(cur);
                     }
+                    padTo(out, 256 - 16, null);
+
+                    volumeDescriptorSequence(out, true);
+                    anchorVolumeDescriptorPointer(out);
+                    if (!extents2.isEmpty()) {
+                        Iterator<DataDesc> li2 = extents2.iterator();
+                        while (li2.hasNext()) {
+                            writeExtent(out, li2.next());
+                        }
+                    }
+
+                    while (li.hasNext()) {
+                        writeExtent(out, li.next());
+                    }
+
+                    partitionEnd(out);
+                    volumeDescriptorSequence(out, false);
+                    anchorVolumeDescriptorPointer(out);
                 }
+            } else {
+                partitionStart(out);
+                filesetDescriptor(out, root);
+                for (DataDesc desc : extents) {
+                    writeExtent(out, desc);
+                }
+                partitionEnd(out);
+
+//                volumeDescriptorSequence(out, true);
+//                anchorVolumeDescriptorPointer(out);
+                anchorVolumeDescriptorPointer(out);
+                volumeDescriptorSequence(out, true);
+                out.padBlocks((256 - 1) - 16 - 16);
+                volumeDescriptorSequence(out, false);
+                anchorVolumeDescriptorPointer(out);
             }
-            volumeDescriptorSequence(out, false);
-            anchorVolumeDescriptorPointer(out);
-            this.totalSectors = out.nExtent;
 
             assert (out.nExtent <= 2147483647);
             assert (out.nExtent > (256 + 1));
             if (out.nStage <= 0) {
-                System.err.println("Writing completed\n");
+                System.err.print("\nWriting done\n\n");
                 assert ((out.nExtent * out.blockSize) == volumeSize);
                 assert ((16 + extents.size()) == this.nLastUniqueID);
             } else {
@@ -759,7 +803,7 @@ public class UDFBuild {
                 System.err.printf("%20s: %s\n", "ReserveVolumeDescLBA", lbaReserveVolumeDesc);
                 System.err.printf("%20s: %s\n", "IntegritySequenceLBA", lbaIntegritySequence);
                 System.err.printf("%20s: %s\n", "PartitionStartLBA", lbaUDFPartitionStart);
-                System.err.printf("%20s: %s\n", "RootDirectoryLBA", lbaRootDirectoryStart);
+                System.err.printf("%20s: %s\n", "RootDirectoryLBA", root.getData().auxA);
                 System.err.printf("%20s: %s\n", "PartionSize", partionSize);
                 System.err.printf("%20s: %s\n", "BlockSize", out.blockSize);
                 System.err.printf("%20s: %s\n", "VolumeSize", volumeSize);
@@ -772,6 +816,6 @@ public class UDFBuild {
 /*
 
 K:/wrx/java/mkimg/bin/mkimg.cmd K:\app\nt\BootICE -o C:/temp/udf.iso && K:/pub/001/udf_test.exe -ecclength 1  C:/temp/udf.iso >  C:/temp/udf.log
-mkimg.cmd K:\app\nt\BootICE -o C:/temp/udf.img --hd && K:/pub/001/udf_test.exe -ecclength 1 -blocksize 512 C:/temp/udf.img >  C:/temp/udf.log
+mkimg.cmd K:\app\nt\PyPy3\x86 -o C:/temp/udf.img --hd && K:/pub/001/udf_test.exe -ecclength 1 -blocksize 512 C:/temp/udf.img >  C:/temp/udf.log
 mee --cd K:/wrx/java/mkimg -- mvn-pe package
  */
